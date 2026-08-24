@@ -1,0 +1,81 @@
+[
+  {
+    "dimension": "preguntas_frecuentes",
+    "titulo": "Preguntas frecuentes reales",
+    "resumen": "Sobre el corpus sintético de demostración: las consultas dominantes son precio/cotización, disponibilidad de stock y envíos al interior. Este texto es un ejemplo del contrato de análisis, no un análisis real.",
+    "hallazgos": [
+      {
+        "titulo": "El precio es la primera pregunta",
+        "detalle": "La mayoría de las conversaciones entrantes abren pidiendo precio o cotización antes que cualquier otra cosa.",
+        "frecuencia": "aparece en la mayoría de las conversaciones con ida y vuelta",
+        "confianza": "alta"
+      },
+      {
+        "titulo": "Los envíos al interior generan consultas repetidas",
+        "detalle": "Varios clientes preguntan por envíos fuera del área metropolitana; la respuesta es siempre la misma plantilla.",
+        "frecuencia": "varias conversaciones distintas",
+        "confianza": "media"
+      }
+    ],
+    "columnas_xlsx": ["#", "Pregunta", "Frecuencia observada", "Ejemplo textual", "Confianza"],
+    "filas_xlsx": [
+      { "#": 1, "Pregunta": "¿Cuánto sale? / cotización", "Frecuencia observada": "dominante en aperturas", "Ejemplo textual": "Hola! Precio de la cinta de 60cm?", "Confianza": "alta" },
+      { "#": 2, "Pregunta": "¿Hacen envíos al interior?", "Frecuencia observada": "recurrente", "Ejemplo textual": "¿Hacen envíos al interior?", "Confianza": "alta" },
+      { "#": 3, "Pregunta": "¿Tienen stock?", "Frecuencia observada": "recurrente", "Ejemplo textual": "Buenas, ¿tienen stock?", "Confianza": "media" }
+    ],
+    "metodo": "Lectura de los mensajes entrantes del corpus sintético y agrupación manual por intención. Ejemplo de contrato: un análisis real declara acá su método exacto.",
+    "limitaciones": [
+      "Corpus sintético de demostración: los hallazgos ilustran el formato, no un negocio real.",
+      "Los mensajes que son solo media (fotos, audios) no tienen texto analizable."
+    ],
+    "verdicto": {
+      "revisados": 3,
+      "confirmados": 2,
+      "refutados": [
+        {
+          "titulo": "Los clientes preguntan por formas de pago",
+          "por_que": "El verificador solo encontró una única mención a tarjeta en todo el corpus: una aparición no es un patrón.",
+          "correccion": "Se elimina el hallazgo; con una sola aparición no se afirma frecuencia."
+        }
+      ]
+    },
+    "notas_verificacion_filas": {
+      "1": "Verificado: la cita existe textual en el corpus y la frecuencia se recontó.",
+      "3": "La frecuencia real es menor a la estimada por el analista; se bajó la confianza a media."
+    }
+  },
+  {
+    "dimension": "operativa_tiempos",
+    "titulo": "Operativa y tiempos de respuesta",
+    "resumen": "Ejemplo de dimensión operativa sobre el corpus sintético: hay conversaciones sin responder y la mediana de respuesta varía fuerte entre hilos.",
+    "hallazgos": [
+      {
+        "titulo": "ALERTA: hay conversaciones entrantes sin ninguna respuesta",
+        "detalle": "Existen hilos donde el cliente escribió varias veces y nunca hubo un mensaje saliente.",
+        "frecuencia": "varias conversaciones del corpus",
+        "confianza": "alta"
+      }
+    ],
+    "columnas_xlsx": ["#", "Aspecto", "Observación", "Confianza"],
+    "filas_xlsx": [
+      { "#": 1, "Aspecto": "Hilos sin responder", "Observación": "El último mensaje es del cliente en una parte relevante de los hilos.", "Confianza": "alta" },
+      { "#": 2, "Aspecto": "Variabilidad de respuesta", "Observación": "Conviven respuestas en minutos con respuestas al día siguiente.", "Confianza": "media" }
+    ],
+    "metodo": "Conteo directo sobre las métricas por conversación del corpus (campo metricas), sin LLM.",
+    "limitaciones": [
+      "La métrica de respuesta se ancla al primer mensaje de cada racha entrante: una respuesta al quinto mensaje de una racha larga cuenta el tiempo desde el primero."
+    ],
+    "verdicto": {
+      "revisados": 2,
+      "confirmados": 1,
+      "refutados": [
+        {
+          "titulo": "Se responde más rápido a la mañana",
+          "por_que": "La muestra por franja horaria del corpus sintético es demasiado chica para sostener la comparación.",
+          "correccion": "Sin corrección numérica: el hallazgo se retira por falta de muestra."
+        }
+      ]
+    },
+    "notas_verificacion_filas": {}
+  }
+]

@@ -101,10 +101,27 @@ for (const c of convs) {
   }
 }
 const mesesOrdenados = Object.keys(porMes).sort();
-// TODO(fase 2): auto-detect the active window instead of this hardcoded cutoff.
-const mensajesAntesDeMayo = mesesOrdenados
-  .filter((m) => m < '2026-05')
+
+// Active-window auto-detection: the shortest contiguous suffix of months that
+// concentrates >= WINDOW_THRESHOLD of the volume. Months before it are
+// residual traffic (stray messages, not sustained activity) and any "per
+// month" average over the full range would lie. This is computed, never
+// hardcoded: the report must stay honest on corpora it has never seen.
+const WINDOW_THRESHOLD = 0.95;
+let ventanaDesdeIdx = 0;
+{
+  let acc = 0;
+  for (let i = mesesOrdenados.length - 1; i >= 0; i--) {
+    acc += porMes[mesesOrdenados[i]];
+    if (totalMensajes > 0 && acc / totalMensajes >= WINDOW_THRESHOLD) { ventanaDesdeIdx = i; break; }
+  }
+}
+const mesInicioVentana = mesesOrdenados[ventanaDesdeIdx] ?? null;
+const mesesVentana = mesesOrdenados.length - ventanaDesdeIdx;
+const mensajesResiduales = mesesOrdenados
+  .slice(0, ventanaDesdeIdx)
   .reduce((a, m) => a + porMes[m], 0);
+const hayResidual = ventanaDesdeIdx > 0;
 
 const convsReales = convs.filter((c) => !c.es_sistema && !c.es_interno);
 const numSistema = convs.filter((c) => c.es_sistema).length;
@@ -181,14 +198,16 @@ const push = (fila, estilo) => {
 push([`${BUSINESS} — Historial de WhatsApp: informe maestro`], 3);
 push([`Generado el ${new Date().toISOString().slice(0, 10)} a partir del dump de la sesión WAHA ${resumen.sesion_waha}`]);
 push([]);
-push(['LEER PRIMERO — el rango de fechas engaña'], 1);
-push([
-  `El historial va del ${soloFecha(primerIso)} al ${soloFecha(ultimoIso)}, pero NO es un año de actividad. ` +
-    `Antes de mayo de 2026 hay apenas ${mensajesAntesDeMayo} mensajes en todo el dump (mensajes sueltos, no conversaciones). ` +
-    `El ${pct(totalMensajes - mensajesAntesDeMayo, totalMensajes)} del volumen está concentrado entre mayo y agosto de 2026. ` +
-    `Cualquier promedio "por mes" calculado sobre el rango completo es falso: hay que dividir por 4 meses, no por 10.`,
-]);
-push([]);
+if (hayResidual) {
+  push(['LEER PRIMERO — el rango de fechas engaña'], 1);
+  push([
+    `El historial va del ${soloFecha(primerIso)} al ${soloFecha(ultimoIso)} (${mesesOrdenados.length} meses calendario), pero NO es actividad pareja. ` +
+      `Antes de ${mesInicioVentana} hay apenas ${num(mensajesResiduales)} mensajes en todo el dump (actividad residual, no conversaciones sostenidas). ` +
+      `El ${pct(totalMensajes - mensajesResiduales, totalMensajes)} del volumen está concentrado en los ${mesesVentana} meses desde ${mesInicioVentana}. ` +
+      `Cualquier promedio "por mes" calculado sobre el rango completo es falso: hay que dividir por ${mesesVentana}, no por ${mesesOrdenados.length}.`,
+  ]);
+  push([]);
+}
 
 push(['VOLUMEN Y ALCANCE'], 1);
 push(['Métrica', 'Valor', 'Aclaración']);
@@ -212,7 +231,7 @@ push(['VOLUMEN POR MES'], 1);
 push(['Mes', 'Mensajes', 'Comentario']);
 filasEstiloResumen[R.length] = 1;
 for (const m of mesesOrdenados) {
-  push([m, porMes[m], m < '2026-05' ? 'Actividad residual, no es un mes de operación' : '']);
+  push([m, porMes[m], hayResidual && m < mesInicioVentana ? 'Actividad residual, no es un mes de operación' : '']);
 }
 push([]);
 

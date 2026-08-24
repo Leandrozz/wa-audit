@@ -1,0 +1,23 @@
+{
+  "lids": {
+    "200000000000001@lid": {
+      "pn": "5491155501234@c.us",
+      "name": "Ana Gómez"
+    },
+    "200000000000002@lid": {
+      "pn": "5491155667788@c.us",
+      "name": "Lidia Reyes"
+    },
+    "300000000000003@lid": {
+      "pn": null,
+      "name": null
+    }
+  },
+  "contacts": {
+    "5491155501234@c.us": "Ana Gómez",
+    "541122334455@c.us": "Bruno Díaz",
+    "56912345678@c.us": "Camila Soto",
+    "5491144556677@c.us": "Marcos Media",
+    "5491199887766@c.us": "Depósito (interno)"
+  }
+}
