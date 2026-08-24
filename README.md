@@ -96,7 +96,7 @@ mandatory verification:
 ## Try it in two minutes (no WhatsApp needed)
 
 ```bash
-git clone <this repo> && cd wa-audit
+git clone https://github.com/Leandrozz/wa-audit && cd wa-audit
 npm install
 npm run demo
 ```

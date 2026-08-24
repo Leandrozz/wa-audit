@@ -97,7 +97,7 @@ obligatoria:
 ## Probalo en dos minutos (sin WhatsApp)
 
 ```bash
-git clone <este repo> && cd wa-audit
+git clone https://github.com/Leandrozz/wa-audit && cd wa-audit
 npm install
 npm run demo
 ```
