@@ -1,0 +1,13 @@
+{
+  "refuted": [
+    {
+      "title": "Los pedidos urgentes dominan el canal",
+      "reason": "El recuento contra el corpus muestra una sola conversación con urgencia explícita de entrega sobre más de veinte hilos: 'dominan' no se sostiene.",
+      "correction": "1 hilo de 23 menciona urgencia de entrega; se retira la generalización."
+    }
+  ],
+  "row_verification_notes": {
+    "1": "Verificado: la cita existe textual y el conteo de hilos con pedido de precio es consistente con el corpus.",
+    "2": "Verificado contra el corpus; el conteo declarado coincide."
+  }
+}

@@ -15,7 +15,7 @@ const DUMP = path.join(ROOT, 'fixtures', 'waha-dump');
 export const tmpDir = () => mkdtempSync(path.join(os.tmpdir(), 'wa-audit-'));
 
 /** Env for pipeline runs: fixture knobs on, inherited WAHA_* off. */
-function baseEnv(outDir, extra = {}) {
+export function pipelineEnv(outDir, extra = {}) {
   const env = { ...process.env, ...extra };
   delete env.WAHA_BASE_URL;
   delete env.WAHA_API_KEY;
@@ -72,11 +72,11 @@ export function runDirectLane() {
   const truth = readJson(path.join(DUMP, 'lid-truth.json'));
   writeFileSync(path.join(out, 'lid-cache.json'), JSON.stringify(truth.lids, null, 2));
 
-  const threads = run('src/threads.mjs', { args: ['--session', 'fixture', '--no-net'], env: baseEnv(out) });
+  const threads = run('src/threads.mjs', { args: ['--session', 'fixture', '--no-net'], env: pipelineEnv(out) });
   if (threads.status !== 0) throw new Error(`threads failed:\n${threads.stdout}\n${threads.stderr}`);
 
   copyFileSync(path.join(ROOT, 'fixtures', 'analysis-sample.json'), path.join(out, 'analysis.json'));
-  const report = run('src/report-xlsx.mjs', { env: baseEnv(out) });
+  const report = run('src/report-xlsx.mjs', { env: pipelineEnv(out) });
   if (report.status !== 0) throw new Error(`report failed:\n${report.stdout}\n${report.stderr}`);
 
   return {
@@ -115,15 +115,15 @@ export async function runMockLane(port = 8399) {
     const wahaEnv = { WAHA_BASE_URL: `http://localhost:${port}`, WAHA_API_KEY: 'test' };
     const out = tmpDir();
 
-    const probe = run('src/probe.mjs', { env: baseEnv(out, wahaEnv) });
+    const probe = run('src/probe.mjs', { env: pipelineEnv(out, wahaEnv) });
     if (probe.status !== 0) throw new Error(`probe failed:\n${probe.stdout}\n${probe.stderr}`);
 
-    const exp = run('src/export.mjs', { args: ['fixture'], env: baseEnv(out, wahaEnv) });
+    const exp = run('src/export.mjs', { args: ['fixture'], env: pipelineEnv(out, wahaEnv) });
     if (exp.status !== 0) throw new Error(`export failed:\n${exp.stdout}\n${exp.stderr}`);
     const exportedLines = readFileSync(path.join(out, 'messages.jsonl'), 'utf8')
       .split('\n').filter((l) => l.trim()).length;
 
-    const threads = run('src/threads.mjs', { args: ['--session', 'fixture'], env: baseEnv(out, wahaEnv) });
+    const threads = run('src/threads.mjs', { args: ['--session', 'fixture'], env: pipelineEnv(out, wahaEnv) });
     if (threads.status !== 0) throw new Error(`threads failed:\n${threads.stdout}\n${threads.stderr}`);
 
     return {

@@ -1,0 +1,7 @@
+{
+  "refuted": [],
+  "row_verification_notes": {
+    "1": "Verificado: el contador unanswered_threads del bloque determinístico respalda la observación.",
+    "2": "Verificado contra las medianas por hilo del bloque determinístico."
+  }
+}

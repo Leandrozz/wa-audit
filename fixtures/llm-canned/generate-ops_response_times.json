@@ -1,0 +1,36 @@
+{
+  "summary": "La operación responde la mayoría de los hilos, pero conviven respuestas en minutos con respuestas al día siguiente, y hay hilos entrantes que nunca recibieron un mensaje saliente.",
+  "findings": [
+    {
+      "title": "ALERTA: hay conversaciones entrantes sin ninguna respuesta",
+      "detail": "Existen hilos donde el cliente escribió varias veces y nunca hubo un mensaje saliente del negocio.",
+      "frequency": "varios hilos del corpus según el bloque de métricas",
+      "confidence": "high",
+      "evidence": [
+        { "thread_id": "5491133445566", "quote": "¿Me leen?" }
+      ]
+    },
+    {
+      "title": "La velocidad de respuesta es muy dispar entre hilos",
+      "detail": "Según las medianas por conversación del bloque de métricas, conviven hilos atendidos en minutos con hilos atendidos al día siguiente.",
+      "frequency": "observable en las medianas por hilo del bloque determinístico",
+      "confidence": "medium",
+      "evidence": [
+        { "thread_id": "5491177889900", "quote": "Recibido, te lo cotizo completo." }
+      ]
+    }
+  ],
+  "columns": [
+    { "key": "n", "label": "#" },
+    { "key": "aspect", "label": "Aspecto" },
+    { "key": "observation", "label": "Observación" }
+  ],
+  "rows": [
+    { "n": 1, "aspect": "Hilos sin responder", "observation": "El último mensaje es del cliente en una parte de los hilos; ver unanswered_threads en el resumen." },
+    { "n": 2, "aspect": "Dispersión de respuesta", "observation": "Medianas por hilo desde minutos hasta más de un día." }
+  ],
+  "method": "Interpretación de las métricas determinísticas por hilo (median_response_min, unanswered) con citas del digest.",
+  "limitations": [
+    "La métrica de respuesta se ancla al primer mensaje de cada racha entrante."
+  ]
+}

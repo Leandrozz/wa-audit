@@ -5,7 +5,9 @@
  * Env overrides exist so tests and one-off runs don't need to write a file:
  *   WA_OUT_DIR, WA_BUSINESS_NAME, WA_INTERNAL_EMAIL_DOMAINS (comma-separated),
  *   WA_INTERNAL_NUMBERS (comma-separated), WA_CRM_FILE, WA_REPORT_FILENAME,
- *   WA_LOCALE, WA_TZ_OFFSET (e.g. "-03:00"), WA_DEFAULT_COUNTRY (ISO-3166)
+ *   WA_LOCALE, WA_TZ_OFFSET (e.g. "-03:00"), WA_DEFAULT_COUNTRY (ISO-3166),
+ *   WA_LLM_PROVIDER, WA_LLM_MODEL, WA_LLM_BASE_URL, WA_LLM_CANNED_DIR,
+ *   WA_ANALYSIS_LANGUAGE
  *
  * WAHA connection settings (WAHA_BASE_URL, WAHA_API_KEY, WAHA_BASIC_AUTH,
  * WAHA_SESSION) are env-only on purpose: they are secrets, not configuration.
@@ -35,6 +37,17 @@ const DEFAULTS = {
   },
   crm: {
     file: null,                // path to a CRM CSV (see docs/data-contract.md)
+  },
+  llm: {
+    provider: 'anthropic',     // anthropic | openai | mock (src/lib/llm.mjs)
+    model: null,               // default per provider (anthropic: claude-opus-5)
+    baseUrl: null,             // override for OpenAI-compatible endpoints
+    maxTokens: 16000,
+    cannedDir: null,           // mock provider: directory of canned responses
+  },
+  analysis: {
+    language: 'es',            // language the LLM writes the report content in
+    maxCorpusChars: 150000,    // context budget for the corpus digest
   },
 };
 
@@ -81,6 +94,11 @@ export function loadConfig() {
   if (env.WA_LOCALE) cfg.locale = env.WA_LOCALE;
   if (env.WA_TZ_OFFSET) cfg.timezone.utcOffset = env.WA_TZ_OFFSET;
   if (env.WA_DEFAULT_COUNTRY) cfg.phone.defaultCountry = env.WA_DEFAULT_COUNTRY;
+  if (env.WA_LLM_PROVIDER) cfg.llm.provider = env.WA_LLM_PROVIDER;
+  if (env.WA_LLM_MODEL) cfg.llm.model = env.WA_LLM_MODEL;
+  if (env.WA_LLM_BASE_URL) cfg.llm.baseUrl = env.WA_LLM_BASE_URL;
+  if (env.WA_LLM_CANNED_DIR) cfg.llm.cannedDir = env.WA_LLM_CANNED_DIR;
+  if (env.WA_ANALYSIS_LANGUAGE) cfg.analysis.language = env.WA_ANALYSIS_LANGUAGE;
 
   const m = /^([+-])(\d{2}):(\d{2})$/.exec(cfg.timezone.utcOffset);
   if (!m) {

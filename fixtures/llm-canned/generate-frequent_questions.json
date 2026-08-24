@@ -1,0 +1,55 @@
+{
+  "summary": "Las consultas entrantes del corpus se concentran en precio/cotización, envíos al interior y disponibilidad. Una parte de los hilos abre con un pedido de precio directo y sin saludo previo.",
+  "findings": [
+    {
+      "title": "El precio es la primera pregunta",
+      "detail": "Varias conversaciones abren pidiendo precio o cotización antes que cualquier otra cosa.",
+      "frequency": "presente en varios hilos con ida y vuelta",
+      "confidence": "high",
+      "evidence": [
+        { "thread_id": "5491155501234", "quote": "Hola! Precio de la cinta de 60cm?" }
+      ]
+    },
+    {
+      "title": "Los envíos al interior son una consulta recurrente",
+      "detail": "Clientes de fuera del área metropolitana preguntan por envíos y costos de flete.",
+      "frequency": "varios hilos distintos",
+      "confidence": "medium",
+      "evidence": [
+        { "thread_id": "5491122334455", "quote": "¿Hacen envíos al interior?" }
+      ]
+    },
+    {
+      "title": "Los clientes piden facturación A",
+      "detail": "Hay demanda repetida de factura A por parte de clientes empresa.",
+      "frequency": "frecuente",
+      "confidence": "high",
+      "evidence": [
+        { "thread_id": "5491155501234", "quote": "necesito factura A" }
+      ]
+    },
+    {
+      "title": "Los pedidos urgentes dominan el canal",
+      "detail": "La mayoría de los clientes escribe con urgencia de entrega inmediata.",
+      "frequency": "mayoría de los hilos",
+      "confidence": "medium",
+      "evidence": [
+        { "thread_id": "5491133445566", "quote": "Necesito 3 unidades para la semana que viene" }
+      ]
+    }
+  ],
+  "columns": [
+    { "key": "n", "label": "#" },
+    { "key": "question", "label": "Pregunta" },
+    { "key": "threads", "label": "Hilos distintos" },
+    { "key": "example", "label": "Ejemplo textual" }
+  ],
+  "rows": [
+    { "n": 1, "question": "Precio / cotización", "threads": 5, "example": "Hola! Precio de la cinta de 60cm?" },
+    { "n": 2, "question": "Envíos al interior", "threads": 3, "example": "¿Hacen envíos al interior?" }
+  ],
+  "method": "Lectura de mensajes entrantes del digest y agrupación por intención, con conteo de hilos distintos.",
+  "limitations": [
+    "Los mensajes que son solo media no tienen texto analizable."
+  ]
+}

@@ -12,7 +12,10 @@
     "probe": "node src/probe.mjs",
     "export": "node src/export.mjs",
     "threads": "node src/threads.mjs",
+    "analyze": "node src/analyze.mjs",
+    "check:analysis": "node tools/check-analysis.mjs",
     "report": "node src/report-xlsx.mjs",
+    "demo": "node tools/demo.mjs",
     "test": "node --test \"test/*.test.mjs\""
   },
   "dependencies": {
