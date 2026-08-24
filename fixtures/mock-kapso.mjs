@@ -85,7 +85,25 @@ const server = createServer((req, res) => {
   const limit = Math.min(Number(url.searchParams.get('limit') ?? 20), 100);
   const after = url.searchParams.get('after');
   const start = after ? Number(Buffer.from(after, 'base64').toString('utf8')) : 0;
-  const page = messages.slice(start, start + limit);
+
+  // Faithful to the live API's sharp edge: no `fields` param returns the full
+  // kapso object; `fields=kapso(a,b)` returns only those subfields; an EMPTY
+  // `kapso()` strips the extension entirely.
+  const fields = url.searchParams.get('fields');
+  let kapsoFilter = null; // null = full object
+  if (fields) {
+    const m2 = fields.match(/^kapso\(([^)]*)\)$/);
+    if (!m2) return json({ error: 'Invalid fields parameter' }, 400);
+    kapsoFilter = m2[1].split(',').map((s) => s.trim()).filter(Boolean);
+  }
+  const project = (m) => {
+    if (kapsoFilter === null) return m;
+    const { kapso, ...rest } = m;
+    if (kapsoFilter.length === 0) return rest;
+    return { ...rest, kapso: Object.fromEntries(kapsoFilter.filter((k) => k in kapso).map((k) => [k, kapso[k]])) };
+  };
+
+  const page = messages.slice(start, start + limit).map(project);
   const next = start + page.length;
   json({
     data: page,

@@ -109,7 +109,12 @@ const lines = [];
 let dropped = 0;
 let cursor = null;
 for (;;) {
-  const qs = new URLSearchParams({ limit: '100', fields: 'kapso()' });
+  // Explicit kapso subfields: verified against the live API, an EMPTY
+  // kapso() strips the extension entirely (undocumented sharp edge).
+  const qs = new URLSearchParams({
+    limit: '100',
+    fields: 'kapso(direction,phone_number,has_media,contact_name,content,whatsapp_conversation_id)',
+  });
   if (SINCE) qs.set('since', SINCE);
   if (cursor) qs.set('after', cursor);
   const page = await get(`/${encodeURIComponent(PHONE_ID)}/messages?${qs}`);
