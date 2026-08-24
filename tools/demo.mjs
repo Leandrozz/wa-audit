@@ -55,10 +55,15 @@ try {
   step('4. Analyze + verify (mock LLM)', 'src/analyze.mjs', ['--dimensions', 'frequent_questions,ops_response_times']);
   step('4b. Validate the analysis contract', 'tools/check-analysis.mjs');
   step('5. Build the XLSX report', 'src/report-xlsx.mjs');
+  step('5b. Build the HTML report', 'src/report-html.mjs');
+  step('5c. Build the Word report', 'src/report-docx.mjs');
 } finally {
   mock.kill();
 }
 
-console.log(`\n✓ Demo complete. Open: ${path.join(OUT, 'whatsapp-report.xlsx')}`);
+console.log(`\n✓ Demo complete. Open any of:`);
+console.log(`  ${path.join(OUT, 'whatsapp-report.xlsx')}`);
+console.log(`  ${path.join(OUT, 'whatsapp-report.html')}`);
+console.log(`  ${path.join(OUT, 'whatsapp-report.docx')}`);
 console.log('  Everything you just saw ran locally: synthetic data, mock WAHA, mock LLM.');
 console.log('  Against a real WAHA instance the flow is identical — see README quickstart.');
