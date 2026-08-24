@@ -6,7 +6,7 @@
   "private": true,
   "license": "MIT",
   "engines": {
-    "node": ">=20.6"
+    "node": ">=22"
   },
   "scripts": {
     "probe": "node src/probe.mjs",
