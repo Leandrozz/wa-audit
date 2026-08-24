@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>wa-audit</title>
-<meta name="description" content="Auditoría de tu WhatsApp de ventas: análisis con IA, verificado contra tus chats reales. Pedila hecha o corré el repo open source.">
+<meta name="description" content="En tu WhatsApp hay plata dormida: clientes esperando respuesta, cotizaciones sin cerrar. Auditamos tu historial y te mostramos qué hay, con la cita al lado.">
 <meta property="og:type" content="website">
 <meta property="og:title" content="wa-audit">
-<meta property="og:description" content="La IA sacó 60 conclusiones de un WhatsApp de ventas. 34 no aguantaron el recuento. Auditoría verificada contra tus chats reales.">
+<meta property="og:description" content="133 clientes escribieron y quedaron esperando. En otro negocio, $15,6 M en cotizaciones dormidas. Auditamos tu historial de WhatsApp y te mostramos qué hay ahí.">
 <meta property="og:image" content="https://leandrozz.github.io/wa-audit/og.png">
 <meta property="og:url" content="https://leandrozz.github.io/wa-audit/">
 <meta name="twitter:card" content="summary_large_image">
@@ -114,6 +114,12 @@
   ol.steps b { display: block; margin-bottom: 2px; }
   ol.steps p { margin: 0; font-size: 15.5px; color: var(--muted); }
 
+  ul.stats { list-style: none; margin: 24px 0; padding: 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px 32px; }
+  @media (max-width: 620px) { ul.stats { grid-template-columns: 1fr; } }
+  ul.stats li { border-left: 3px solid var(--accent); padding-left: 16px; }
+  ul.stats b { display: block; font-family: var(--display); font-weight: 650; font-size: 34px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  ul.stats span { display: block; font-size: 15px; color: var(--muted); margin-top: 4px; }
+
   .fate-q { margin: 0 0 16px; padding: 0; list-style: none; }
   .fate-q li { padding: 8px 0; font-size: 17px; }
   .fate-q .k { font-family: var(--mono); font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); margin-left: 8px; }
@@ -143,25 +149,25 @@
   <div class="wrap">
     <div class="hero-grid">
       <div>
-        <h1>La IA leyó 8 meses de un WhatsApp de ventas. Sacó 60 conclusiones. <span class="r">34 no aguantaron el recuento.</span></h1>
-        <p class="lede">Eso pasa cuando le pedís análisis a un chatbot: contesta seguro, prolijo y sin pruebas. wa-audit hace el mismo análisis y después manda un verificador a recontar cada hallazgo contra tus chats reales. Al informe entra lo que se comprueba. Lo refutado queda anotado, con la corrección al lado.</p>
+        <h1>En tu WhatsApp hay plata dormida. <span class="r">Y no la ve nadie.</span></h1>
+        <p class="lede">En un negocio encontramos 133 clientes que escribieron y quedaron esperando respuesta. En otro, $15,6 millones en cotizaciones sin cerrar, dormidos en 101 conversaciones. Ninguno de los dos dueños lo sabía. Leemos tu historial completo y te mostramos lo que hay ahí adentro, con nombre y monto.</p>
         <div class="ctas">
           <a class="btn" href="https://calendly.com/leancicardi/auditoria-whatsapp">Agendá 30 minutos</a>
           <a class="link-cta" href="https://github.com/Leandrozz/wa-audit">Ver el código en GitHub</a>
         </div>
         <p class="cta-note">Gratis. Miramos tu historial, te mostramos un informe de ejemplo y te decimos si tu caso da para esto. Si no da, también te lo decimos.</p>
       </div>
-      <div class="finding" aria-label="Ejemplo real de hallazgo refutado">
-        <span class="stamp">Refutado</span>
-        <span class="tag">Hallazgo 41 de 60 · objeciones</span>
-        <h3>"Los clientes abandonan por el precio"</h3>
-        <p class="claim">Confianza alta, tres citas, redacción impecable.</p>
+      <div class="finding" aria-label="Ejemplo de lo que aparece en una auditoría">
+        <span class="tag">De una auditoría real · 610 conversaciones</span>
+        <h3>133 clientes escribieron y quedaron esperando</h3>
+        <p class="claim">El último mensaje del hilo es del cliente. Nadie volvió a escribirles.</p>
         <div class="verdict">
-          verificador, recuento contra el corpus:<br>
-          <b>7 de 9 abandonos</b> vinieron después de <b>24 h sin respuesta</b>,
-          no después del precio. Se retira el hallazgo. La corrección va al informe.
+          cada uno con su número, su fecha<br>
+          y su última pregunta sin responder.<br>
+          <b>Leads ya pagados</b> con publicidad, referidos<br>
+          y años de mostrador, muriendo en el visto.
         </div>
-        <p class="foot">Uno de los 34. Todos quedan registrados así.</p>
+        <p class="foot">Es uno de los hallazgos del informe. Hay más.</p>
       </div>
     </div>
   </div>
@@ -180,16 +186,18 @@
 
 <section>
   <div class="wrap text">
-    <h2>Qué recibís</h2>
-    <p>Un informe sobre tu historial completo, en Excel, Word y HTML:</p>
+    <h2>Qué duerme en tu historial</h2>
+    <p>El informe llega en Excel, Word y HTML, y trae esto:</p>
     <ul class="recibis">
-      <li>Qué preguntan tus clientes, con las palabras exactas que usan.</li>
+      <li>Quién quedó esperando respuesta y todavía está a un mensaje de volver.</li>
+      <li>Las preguntas que tus clientes repiten todas las semanas, con sus palabras exactas.</li>
       <li>Dónde se caen las ventas y qué pasó justo antes de cada caída.</li>
-      <li>Tiempos de respuesta reales, conversación por conversación.</li>
+      <li>Las objeciones que más te cuestan, dichas por ellos: el guion de ventas ya está escrito.</li>
+      <li>Tus tiempos de respuesta reales, conversación por conversación.</li>
       <li>Qué podría contestar un bot sin arruinar nada, y dónde tiene que entrar una persona.</li>
-      <li>Cómo conversa tu equipo, medido con el lente FATE.</li>
-      <li class="destacado">La hoja que casi nadie entrega: los hallazgos refutados, para que nadie vuelva a citar números falsos.</li>
+      <li class="destacado">Y lo que la verificación tumbó: los hallazgos que no resistieron el recuento, para que nadie cite números falsos.</li>
     </ul>
+    <p class="muted" style="font-size: 15px;">Cada dato sale de tus conversaciones, con la cita textual al lado. Nada estimado, nada inventado.</p>
   </div>
 </section>
 
@@ -199,7 +207,7 @@
     <ol class="steps">
       <li><div><b>Conectás el número.</b><p>Escaneás un QR desde el teléfono del negocio. Acceso de solo lectura: no se manda ni un mensaje.</p></div></li>
       <li><div><b>Se arma el corpus.</b><p>Historial completo, limpio: identidades unificadas, grupos afuera, métricas por conversación, cruce con tu cartera.</p></div></li>
-      <li><div><b>La IA analiza, el verificador refuta.</b><p>Cada hallazgo cita el mensaje exacto que lo respalda. Lo que no aparece en tus chats no entra al informe.</p></div></li>
+      <li><div><b>La IA lee, el verificador comprueba.</b><p>Cada hallazgo cita el mensaje exacto que lo respalda. Lo que no aparece en tus chats no entra al informe: en el caso real, el verificador tumbó 34 de las 60 conclusiones de la IA.</p></div></li>
       <li><div><b>Recibís el informe.</b><p>Excel, Word y HTML. Si lo hicimos nosotros, con una lectura guiada de los resultados.</p></div></li>
     </ol>
   </div>
@@ -207,15 +215,30 @@
 
 <section>
   <div class="wrap text">
-    <h2>El lente FATE</h2>
-    <p>Del manual de análisis de comportamiento de Chase Hughes tomamos cuatro preguntas y las medimos sobre tus mensajes reales, con citas:</p>
+    <h2>Y después, que deje de pasar</h2>
+    <p>La auditoría te muestra dónde se te escapa. <b>Elevate Sales</b> hace que no se escape más: un agente de IA sobre tu mismo número, que contesta primero, cotiza con tu catálogo real y le pasa la conversación al vendedor con todo el contexto.</p>
+    <ul class="stats">
+      <li><b>542</b><span>conversaciones atendidas en 8 semanas</span></li>
+      <li><b>$53,9 M</b><span>cotizados sobre 923 chats</span></li>
+      <li><b>24,6%</b><span>de tasa de cierre</span></li>
+      <li><b>0,5%</b><span>terminó con el cliente molesto</span></li>
+    </ul>
+    <p>Y los $15,6 millones que dormían dejaron de ser invisibles: 101 conversaciones en seguimiento, una por una, con nombre y monto.</p>
+    <p><a class="link-cta" href="https://sales.elevateai.ar/">Ver Elevate Sales →</a></p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap text">
+    <h2>Cómo conversa tu equipo</h2>
+    <p>Además de los números, el informe mide cómo escriben ustedes. Cuatro preguntas, sobre mensajes reales y con citas:</p>
     <ul class="fate-q">
       <li>¿Tus aperturas ganan atención o son la misma plantilla de siempre?<span class="k">Foco</span></li>
       <li>¿Contestás con certeza o con "creo que capaz"? ¿Cumplís los plazos que prometés en el chat?<span class="k">Autoridad</span></li>
       <li>¿El cliente se siente entendido o le hablás en idioma catálogo?<span class="k">Tribu</span></li>
       <li>¿Calmás al que duda antes de venderle?<span class="k">Emoción</span></li>
     </ul>
-    <p class="muted" style="font-size: 14px;">Articulación propia con atribución. Sin afiliación con el autor.</p>
+    <p class="muted" style="font-size: 14px;">Lente inspirado en el modelo FATE de Chase Hughes. Articulación propia, sin afiliación con el autor.</p>
   </div>
 </section>
 
@@ -251,6 +274,10 @@
     <details>
       <summary>¿Qué pasa en los 30 minutos?</summary>
       <p>Miramos juntos qué profundidad de historial tenés, te mostramos un informe de ejemplo terminado y te decimos si tu caso da o no da. Si no da, terminamos ahí y te llevás el diagnóstico igual.</p>
+    </details>
+    <details>
+      <summary>¿Por qué le creería a un informe hecho con IA?</summary>
+      <p>Porque no te lo entregamos crudo. Cada hallazgo tiene que citar el mensaje exacto que lo respalda, y un verificador independiente recuenta las cifras contra tus conversaciones antes de que entren al informe. En el caso real tumbó 34 de las 60 conclusiones de la IA. Lo refutado también queda escrito, con la corrección al lado.</p>
     </details>
   </div>
 </section>
