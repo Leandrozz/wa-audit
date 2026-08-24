@@ -1,0 +1,15 @@
+# Real chat data lives here — never commit it
+data/
+out/
+
+# Secrets
+*.env
+!waha.env.example
+
+# Generated reports (fixtures are .jsonl/.json/.csv, never .xlsx)
+*.xlsx
+
+node_modules/
+
+# Private working notes (contain real session IDs / client paths) — never commit
+BAJADA-DE-CONTEXTO.md

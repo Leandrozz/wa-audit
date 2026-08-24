@@ -1,0 +1,26 @@
+{
+  "name": "wa-audit",
+  "version": "0.1.0",
+  "description": "Commercial audit of a WhatsApp business number: WAHA history export → clean corpus → verified LLM analysis → multi-sheet XLSX report. Self-hosted, nothing leaves your machine.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.6"
+  },
+  "scripts": {
+    "probe": "node src/probe.mjs",
+    "export": "node src/export.mjs",
+    "threads": "node src/threads.mjs",
+    "report": "node src/report-xlsx.mjs",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "cfb": "^1.2.2",
+    "libphonenumber-js": "^1.11.0",
+    "xlsx": "0.18.5"
+  },
+  "devDependencies": {
+    "ajv": "^8.17.0"
+  }
+}
