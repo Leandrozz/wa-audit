@@ -132,6 +132,23 @@ Prefer to run the analysis with your own agent (Claude Code, Cursor, anything)
 instead of the built-in engine? That's a first-class path:
 [analysis/PLAYBOOK.md](analysis/PLAYBOOK.md).
 
+## The official-API path (Kapso)
+
+If the number runs on the official WhatsApp Business Platform through
+[Kapso](https://kapso.ai), skip WAHA entirely — no unofficial client, no ToS
+disclaimer for this source, no @lid:
+
+```bash
+cp kapso.env.example kapso.env      # KAPSO_API_KEY + KAPSO_PHONE_NUMBER_ID
+npm run export:kapso
+node src/threads.mjs --session kapso --no-net
+```
+
+Same corpus, same verifier, same reports. One honest tradeoff: the official
+platform has no retroactive backfill, so history covers what flowed through
+Kapso since the number was connected there. Details and a mock server to try
+it without an account: [docs/kapso-setup.md](docs/kapso-setup.md).
+
 ## Or let Claude drive the whole thing (MCP)
 
 `npm run mcp` starts an MCP server that turns Claude Desktop / Claude Code /

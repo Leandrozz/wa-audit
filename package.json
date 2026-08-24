@@ -11,6 +11,7 @@
   "scripts": {
     "probe": "node src/probe.mjs",
     "export": "node src/export.mjs",
+    "export:kapso": "node src/export-kapso.mjs",
     "threads": "node src/threads.mjs",
     "analyze": "node src/analyze.mjs",
     "check:analysis": "node tools/check-analysis.mjs",

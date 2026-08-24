@@ -126,6 +126,23 @@ node src/report-xlsx.mjs
 sea) en vez del motor incluido? Es un camino de primera clase:
 [analysis/PLAYBOOK.md](analysis/PLAYBOOK.md).
 
+## El camino oficial (Kapso)
+
+Si tu número corre sobre la plataforma oficial de WhatsApp Business vía
+[Kapso](https://kapso.ai), salteás WAHA por completo: sin cliente no oficial,
+sin disclaimer de ToS para este origen, sin @lid:
+
+```bash
+cp kapso.env.example kapso.env      # KAPSO_API_KEY + KAPSO_PHONE_NUMBER_ID
+npm run export:kapso
+node src/threads.mjs --session kapso --no-net
+```
+
+Mismo corpus, mismo verificador, mismos informes. El tradeoff honesto: la
+plataforma oficial no tiene backfill retroactivo, así que el historial cubre
+lo que pasó por Kapso desde que conectaste el número. Detalles y un mock para
+probarlo sin cuenta: [docs/kapso-setup.md](docs/kapso-setup.md).
+
 ## O dejá que Claude maneje todo (MCP)
 
 `npm run mcp` levanta un server MCP que convierte a Claude Desktop / Claude

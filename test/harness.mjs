@@ -21,7 +21,7 @@ export const tmpDir = () => mkdtempSync(path.join(os.tmpdir(), 'wa-audit-'));
 export function pipelineEnv(outDir, extra = {}) {
   const env = { ...process.env };
   for (const k of Object.keys(env)) {
-    if (k.startsWith('WA_') || k.startsWith('WAHA_')) delete env[k];
+    if (k.startsWith('WA_') || k.startsWith('WAHA_') || k.startsWith('KAPSO_')) delete env[k];
   }
   return {
     ...env,
