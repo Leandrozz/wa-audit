@@ -9,7 +9,7 @@
  *   chats.json         chat metadata (what export.mjs would write)
  *   lid-truth.json     ground truth for @lid resolution + contact names
  *                      (consumed by mock-waha.mjs, and to prefill lid-cache)
- *   crm-contacts.json  synthetic CRM in the ad-hoc format threads.mjs reads
+ *   crm.csv            synthetic CRM CSV (format: src/lib/crm.mjs)
  *
  * Every phone number, name and quote in here is invented.
  *
@@ -244,14 +244,19 @@ const lidTruth = {
 
 // -------------------------------------------------------------------- CRM ---
 
-// Synthetic CRM in the current ad-hoc format. Phone formats are deliberately
-// messy — that's the real-world condition the suffix match exists for.
-const crm = [
-  { id: 1, cliente: 'Ferretería La Tuerca', contacto: 'Ana Gómez', telefono: '+54 9 11 5550-1234', whatsapp: null, email: 'ana@latuerca.example', tipo_cliente: 'minorista', estadio_prospecto: 'cliente', localidad: 'CABA', cod_cliente: 'C-0001', match_suf: null },
-  { id: 2, cliente: 'Distribuidora Díaz', contacto: 'Bruno Díaz', telefono: '11 2233-4455 / 11 5555-0000', whatsapp: null, email: 'bruno@ddiaz.example', tipo_cliente: 'mayorista', estadio_prospecto: 'negociacion', localidad: 'Rosario', cod_cliente: 'C-0002', match_suf: '1122334455' },
-  { id: 3, cliente: 'Uso interno', contacto: 'Depósito', telefono: null, whatsapp: null, email: 'deposito@fixture-internal.test', tipo_cliente: null, estadio_prospecto: null, localidad: null, cod_cliente: null, match_suf: '1199887766' },
-  { id: 4, cliente: 'Cliente Fantasma SRL', contacto: 'Nadie', telefono: '0341- 555 0678 / 0341-555-0884', whatsapp: '115-555-1720', email: 'nadie@fantasma.example', tipo_cliente: 'minorista', estadio_prospecto: 'prospecto', localidad: 'Rosario', cod_cliente: 'C-0044', match_suf: null },
-];
+// Synthetic CRM CSV (see src/lib/crm.mjs for the format). Phone formats are
+// deliberately messy — that's the real-world condition the matcher exists for:
+//  - Ana: clean international format          -> exact match
+//  - Bruno: local format without country code -> parsed with defaultCountry
+//  - Depósito: local format, internal email   -> match + is_internal
+//  - Fantasma: two numbers glued in one field -> unparseable, no match (by design)
+const crmCsv = [
+  'phone,whatsapp,name,contact,email,segment,stage,location,free_extra_column',
+  '"+54 9 11 5550-1234",,"Ferretería La Tuerca","Ana Gómez","ana@latuerca.example","minorista","cliente","CABA","ignored"',
+  '"11 2233-4455",,"Distribuidora Díaz","Bruno Díaz","bruno@ddiaz.example","mayorista","negociacion","Rosario",',
+  '"11 9988-7766",,"Uso interno","Depósito","deposito@fixture-internal.test",,,,',
+  '"0341- 555 0678 / 0341-555-0884","115-555-1720","Cliente Fantasma SRL","Nadie","nadie@fantasma.example","minorista","prospecto","Rosario",',
+].join('\n') + '\n';
 
 // ------------------------------------------------------------------ chats ---
 
@@ -264,7 +269,7 @@ await mkdir(OUT, { recursive: true });
 await writeFile(path.join(OUT, 'messages.jsonl'), lines.join('\n') + '\n', 'utf8');
 await writeFile(path.join(OUT, 'chats.json'), JSON.stringify(chats, null, 2) + '\n', 'utf8');
 await writeFile(path.join(OUT, 'lid-truth.json'), JSON.stringify(lidTruth, null, 2) + '\n', 'utf8');
-await writeFile(path.join(OUT, 'crm-contacts.json'), JSON.stringify(crm, null, 2) + '\n', 'utf8');
+await writeFile(path.join(OUT, 'crm.csv'), crmCsv, 'utf8');
 
 console.log(`✓ ${lines.length} JSONL lines (${jids.length} JIDs) → ${path.join(OUT, 'messages.jsonl')}`);
-console.log(`✓ chats.json, lid-truth.json, crm-contacts.json`);
+console.log(`✓ chats.json, lid-truth.json, crm.csv`);

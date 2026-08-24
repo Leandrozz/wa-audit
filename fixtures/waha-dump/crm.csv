@@ -1,0 +1,5 @@
+phone,whatsapp,name,contact,email,segment,stage,location,free_extra_column
+"+54 9 11 5550-1234",,"Ferretería La Tuerca","Ana Gómez","ana@latuerca.example","minorista","cliente","CABA","ignored"
+"11 2233-4455",,"Distribuidora Díaz","Bruno Díaz","bruno@ddiaz.example","mayorista","negociacion","Rosario",
+"11 9988-7766",,"Uso interno","Depósito","deposito@fixture-internal.test",,,,
+"0341- 555 0678 / 0341-555-0884","115-555-1720","Cliente Fantasma SRL","Nadie","nadie@fantasma.example","minorista","prospecto","Rosario",

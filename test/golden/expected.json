@@ -1,0 +1,116 @@
+{
+  "_note": "Recorded by test/record-golden.mjs. Review every diff to this file like a spec change.",
+  "direct": {
+    "summary": {
+      "schema_version": 1,
+      "session": "fixture",
+      "lines_read": 127,
+      "group_messages_excluded": 5,
+      "malformed_messages": 1,
+      "messages_without_sender": 1,
+      "messages_included": 120,
+      "one_to_one_chats": 24,
+      "lid_jids": 3,
+      "cus_jids": 19,
+      "other_jids": 2,
+      "lids_resolved": 2,
+      "lids_unresolved": 1,
+      "lid_cus_merges": 1,
+      "multi_jid_threads": 1,
+      "threads": 23,
+      "two_way_threads": 18,
+      "unanswered_threads": 7,
+      "threads_with_contact_name": 13,
+      "crm_available": true,
+      "crm_matches": 3,
+      "internal_threads": 1,
+      "inbound": 70,
+      "outbound": 50,
+      "messages_with_media": 7,
+      "global_median_response_min": 139,
+      "count_check_ok": true,
+      "duplicate_thread_ids": 0,
+      "warnings": [
+        "1 lines of messages.jsonl did not parse as JSON and were left out of the corpus",
+        "1 messages without a \"from\" field were left out of the corpus",
+        "2 JIDs with an unexpected suffix (e.g. status@broadcast); treated as raw numbers",
+        "0@c.us is a WhatsApp system pseudo-contact (1 message/s); flagged with is_system=true",
+        "status@broadcast is a WhatsApp system pseudo-contact (1 message/s); flagged with is_system=true"
+      ]
+    },
+    "report": {
+      "sheets": {
+        "Resumen": {
+          "rows": 61,
+          "cols": 6
+        },
+        "Conversaciones": {
+          "rows": 24,
+          "cols": 18
+        },
+        "Transcripciones": {
+          "rows": 121,
+          "cols": 8
+        },
+        "Preguntas frecuentes reales": {
+          "rows": 4,
+          "cols": 6
+        },
+        "Operativa y tiempos de respuest": {
+          "rows": 3,
+          "cols": 4
+        },
+        "Metodologia": {
+          "rows": 64,
+          "cols": 3
+        }
+      },
+      "transcripts_match": true,
+      "threads_match": true,
+      "truncated_cells": 1,
+      "dimensions_included": [
+        "Preguntas frecuentes reales",
+        "Operativa y tiempos de respuest"
+      ]
+    }
+  },
+  "mock": {
+    "exportedLines": 126,
+    "summary": {
+      "schema_version": 1,
+      "session": "fixture",
+      "lines_read": 126,
+      "group_messages_excluded": 5,
+      "malformed_messages": 0,
+      "messages_without_sender": 1,
+      "messages_included": 120,
+      "one_to_one_chats": 24,
+      "lid_jids": 3,
+      "cus_jids": 19,
+      "other_jids": 2,
+      "lids_resolved": 2,
+      "lids_unresolved": 1,
+      "lid_cus_merges": 1,
+      "multi_jid_threads": 1,
+      "threads": 23,
+      "two_way_threads": 18,
+      "unanswered_threads": 7,
+      "threads_with_contact_name": 14,
+      "crm_available": true,
+      "crm_matches": 3,
+      "internal_threads": 1,
+      "inbound": 70,
+      "outbound": 50,
+      "messages_with_media": 7,
+      "global_median_response_min": 139,
+      "count_check_ok": true,
+      "duplicate_thread_ids": 0,
+      "warnings": [
+        "1 messages without a \"from\" field were left out of the corpus",
+        "2 JIDs with an unexpected suffix (e.g. status@broadcast); treated as raw numbers",
+        "0@c.us is a WhatsApp system pseudo-contact (1 message/s); flagged with is_system=true",
+        "status@broadcast is a WhatsApp system pseudo-contact (1 message/s); flagged with is_system=true"
+      ]
+    }
+  }
+}

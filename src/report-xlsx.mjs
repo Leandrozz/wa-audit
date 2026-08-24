@@ -2,16 +2,18 @@
 /**
  * report-xlsx.mjs — Builds the master XLSX report from the corpus + analysis.
  *
- * Inputs (all local, nothing leaves the machine), read from WA_OUT_DIR:
- *   threads.json                 derived corpus (1 object per conversation)
- *   resumen-corpus.json          metrics of the run that produced the corpus
- *   analisis-dimensiones.json    verified analysis, 1 entry per dimension
+ * Inputs (all local, nothing leaves the machine), read from output.dir:
+ *   threads.json     derived corpus, schema_version 1 (docs/data-contract.md)
+ *   summary.json     metrics of the run that produced the corpus
+ *   analysis.json    verified analysis, schema_version 1 (analysis/analysis.schema.json)
  *
- * Output (same dir):
- *   whatsapp-report.xlsx         (override with WA_REPORT_FILENAME)
+ * Output (same dir): report.filename (default whatsapp-report.xlsx)
  *
  * Usage: node src/report-xlsx.mjs
- * Optional env: WA_OUT_DIR, WA_REPORT_FILENAME, WA_BUSINESS_NAME
+ * Configuration: wa-audit.config.json + env overrides (src/lib/config.mjs).
+ *
+ * The report prose is Spanish (es-AR preset); the data contract underneath is
+ * English. Prose i18n is roadmap, and deliberately not blocking.
  *
  * Technical note: xlsx 0.18.5 (SheetJS community) writes neither cell styles
  * nor frozen panes. The file is generated with SheetJS and then post-processed
@@ -23,10 +25,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import XLSX from 'xlsx';
 import CFB from 'cfb';
+import { loadConfig } from './lib/config.mjs';
 
-const DIR = process.env.WA_OUT_DIR ?? 'data/wa-history';
-const OUT = path.join(DIR, process.env.WA_REPORT_FILENAME ?? 'whatsapp-report.xlsx');
-const BUSINESS = process.env.WA_BUSINESS_NAME ?? 'Mi Negocio';
+const cfg = loadConfig();
+const DIR = cfg.output.dir;
+const OUT = path.join(DIR, cfg.report.filename);
+const BUSINESS = cfg.business.name;
 
 const MAX_CELL = 32767; // hard Excel limit per cell
 
@@ -45,13 +49,28 @@ function celda(s) {
   return t.slice(0, MAX_CELL - 20) + ' […TRUNCADO]';
 }
 
-const num = (n) => new Intl.NumberFormat('es-AR').format(n);
-const pct = (a, b) => (b ? ((a / b) * 100).toFixed(1).replace('.', ',') + '%' : '—');
+const nf = new Intl.NumberFormat(cfg.locale);
+const nf1 = new Intl.NumberFormat(cfg.locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const num = (n) => nf.format(n);
+const num1 = (n) => nf1.format(n);
+const pct = (a, b) => (b ? nf1.format((a / b) * 100) + '%' : '—');
 
 /** "2026-05-14T15:58:38.000-03:00" -> "2026-05-14 15:58" */
 const fechaHora = (iso) => (iso ? `${iso.slice(0, 10)} ${iso.slice(11, 16)}` : '');
 const soloFecha = (iso) => (iso ? iso.slice(0, 10) : '');
 const soloHora = (iso) => (iso ? iso.slice(11, 16) : '');
+
+// Presentation maps: the data contract is English, the report is Spanish.
+const TIPO_ES = {
+  text: 'texto', image: 'imagen', video: 'video', audio: 'audio',
+  voice_note: 'nota de voz', document: 'documento', sticker: 'sticker',
+  contact: 'contacto', location: 'ubicación', buttons: 'botones', media: 'media',
+};
+const DIR_ES = { inbound: 'entrante', outbound: 'saliente' };
+const CONF_ES = { high: 'alta', medium: 'media', low: 'baja' };
+const tipoEs = (t) => TIPO_ES[t] ?? t;
+const dirEs = (d) => DIR_ES[d] ?? d;
+const confEs = (c) => CONF_ES[c] ?? (c ?? '');
 
 /** Valid sheet name: <=31 chars, none of : \ / ? * [ ] */
 function nombreHoja(s, usados) {
@@ -69,22 +88,34 @@ function nombreHoja(s, usados) {
 
 // ------------------------------------------------------------------- inputs
 
-const threads = leerJson('threads.json');
-const resumen = leerJson('resumen-corpus.json');
+const corpusFile = leerJson('threads.json');
+if (corpusFile?.schema_version !== 1 || !Array.isArray(corpusFile.threads)) {
+  console.error('threads.json is not schema_version 1 — regenerate the corpus with src/threads.mjs.');
+  process.exit(1);
+}
+const threads = corpusFile.threads;
+const summary = leerJson('summary.json');
 
 let dimensiones = [];
 try {
-  dimensiones = leerJson('analisis-dimensiones.json');
-  if (!Array.isArray(dimensiones)) dimensiones = [dimensiones];
+  const analysis = leerJson('analysis.json');
+  if (analysis?.schema_version === 1 && Array.isArray(analysis.dimensions)) {
+    dimensiones = analysis.dimensions;
+  } else if (analysis) {
+    console.warn('  ! analysis.json is not schema_version 1 — ignoring it (validate with npm run check:analysis)');
+  }
 } catch {
   dimensiones = [];
+}
+for (const d of dimensiones) {
+  if (!d.verdict) console.warn(`  ! dimension "${d.key ?? d.title}" has no verdict — unverified analysis should not ship`);
 }
 
 // ------------------------------------------------------------ base metrics
 
 const convs = threads.slice();
-const totalMensajes = convs.reduce((a, c) => a + c.mensajes.length, 0);
-const entrantes = convs.reduce((a, c) => a + c.mensajes.filter((m) => m.direccion === 'entrante').length, 0);
+const totalMensajes = convs.reduce((a, c) => a + c.messages.length, 0);
+const entrantes = convs.reduce((a, c) => a + c.messages.filter((m) => m.direction === 'inbound').length, 0);
 const salientes = totalMensajes - entrantes;
 
 const porTipo = {};
@@ -92,12 +123,12 @@ const porMes = {};
 let primerIso = null;
 let ultimoIso = null;
 for (const c of convs) {
-  for (const m of c.mensajes) {
-    porTipo[m.tipo] = (porTipo[m.tipo] || 0) + 1;
-    const mes = m.fecha_iso.slice(0, 7);
+  for (const m of c.messages) {
+    porTipo[m.type] = (porTipo[m.type] || 0) + 1;
+    const mes = m.iso.slice(0, 7);
     porMes[mes] = (porMes[mes] || 0) + 1;
-    if (!primerIso || m.fecha_iso < primerIso) primerIso = m.fecha_iso;
-    if (!ultimoIso || m.fecha_iso > ultimoIso) ultimoIso = m.fecha_iso;
+    if (!primerIso || m.iso < primerIso) primerIso = m.iso;
+    if (!ultimoIso || m.iso > ultimoIso) ultimoIso = m.iso;
   }
 }
 const mesesOrdenados = Object.keys(porMes).sort();
@@ -123,16 +154,16 @@ const mensajesResiduales = mesesOrdenados
   .reduce((a, m) => a + porMes[m], 0);
 const hayResidual = ventanaDesdeIdx > 0;
 
-const convsReales = convs.filter((c) => !c.es_sistema && !c.es_interno);
-const numSistema = convs.filter((c) => c.es_sistema).length;
+const convsReales = convs.filter((c) => !c.is_system && !c.is_internal);
+const numSistema = convs.filter((c) => c.is_system).length;
 const conCrm = convs.filter((c) => c.crm).length;
-const sinResponder = convs.filter((c) => c.metricas.sin_responder).length;
-const idaYVuelta = convs.filter((c) => c.metricas.ida_y_vuelta).length;
-const conMedia = convs.reduce((a, c) => a + c.metricas.con_media, 0);
-const lidSinResolver = convs.filter((c) => c.lid_sin_resolver).length;
+const sinResponder = convs.filter((c) => c.metrics.unanswered).length;
+const idaYVuelta = convs.filter((c) => c.metrics.two_way).length;
+const conMedia = convs.reduce((a, c) => a + c.metrics.with_media, 0);
+const lidSinResolver = convs.filter((c) => c.unresolved_lid).length;
 
 const medianas = convs
-  .map((c) => c.metricas.mediana_respuesta_min)
+  .map((c) => c.metrics.median_response_min)
   .filter((v) => typeof v === 'number')
   .sort((a, b) => a - b);
 const medianaGlobal =
@@ -170,16 +201,18 @@ function agregarHoja({ nombre, aoa, cols, autofiltro, filasEstilo, bodyStyle, fr
 
 // ======================================================== SHEET 1: Resumen
 
-// Top findings across all dimensions (critical/alert first, then high confidence)
+// Top findings across all dimensions (critical/alert first, then high confidence).
+// Keyword heuristic over finding titles (ES and EN spellings) — documented,
+// deliberately simple; a structured severity field can replace it later.
 const todosHallazgos = [];
 for (const d of dimensiones) {
-  for (const h of d.hallazgos || []) todosHallazgos.push({ ...h, _dim: d.titulo || d.dimension });
+  for (const h of d.findings || []) todosHallazgos.push({ ...h, _dim: d.title || d.key });
 }
 const prioridad = (h) => {
-  const t = (h.titulo || '').toUpperCase();
+  const t = (h.title || '').toUpperCase();
   if (t.includes('CRÍTIC') || t.includes('CRITIC')) return 0;
-  if (t.startsWith('ALERTA')) return 1;
-  if ((h.confianza || '').toLowerCase() === 'alta') return 2;
+  if (t.startsWith('ALERTA') || t.startsWith('ALERT')) return 1;
+  if (h.confidence === 'high') return 2;
   return 3;
 };
 const top10 = todosHallazgos
@@ -196,7 +229,7 @@ const push = (fila, estilo) => {
 };
 
 push([`${BUSINESS} — Historial de WhatsApp: informe maestro`], 3);
-push([`Generado el ${new Date().toISOString().slice(0, 10)} a partir del dump de la sesión WAHA ${resumen.sesion_waha}`]);
+push([`Generado el ${new Date().toISOString().slice(0, 10)} a partir del dump de la sesión WAHA ${summary.session}`]);
 push([]);
 if (hayResidual) {
   push(['LEER PRIMERO — el rango de fechas engaña'], 1);
@@ -214,15 +247,15 @@ push(['Métrica', 'Valor', 'Aclaración']);
 filasEstiloResumen[R.length] = 1;
 const filaResumen = (k, v, nota) => push([k, v, nota || '']);
 filaResumen('Mensajes en el corpus (1 a 1)', num(totalMensajes), 'Excluye los grupos de WhatsApp');
-filaResumen('Mensajes descartados por ser de grupos', num(resumen.mensajes_excluidos_grupos), 'Sobre ' + num(resumen.lineas_leidas) + ' líneas leídas del dump crudo');
+filaResumen('Mensajes descartados por ser de grupos', num(summary.group_messages_excluded), 'Sobre ' + num(summary.lines_read) + ' líneas leídas del dump crudo');
 filaResumen('Entrantes (del cliente)', `${num(entrantes)} (${pct(entrantes, totalMensajes)})`, '');
 filaResumen('Salientes (del negocio)', `${num(salientes)} (${pct(salientes, totalMensajes)})`, 'Incluye tanto personas como cualquier bot que haya respondido desde este número (el dump no los distingue)');
-filaResumen('Conversaciones', num(convs.length), `${num(convsReales.length)} son de clientes reales (${resumen.conversaciones_internas} internas y ${numSistema} pseudo-contacto/s del sistema quedan marcadas aparte)`);
+filaResumen('Conversaciones', num(convs.length), `${num(convsReales.length)} son de clientes reales (${summary.internal_threads} internas y ${numSistema} pseudo-contacto/s del sistema quedan marcadas aparte)`);
 filaResumen('Clientes distintos (números)', num(convsReales.length), 'Una conversación = un número de teléfono');
 filaResumen('Conversaciones con ida y vuelta', `${num(idaYVuelta)} (${pct(idaYVuelta, convs.length)})`, 'El resto es monólogo: o escribió sólo el cliente o sólo el negocio');
 filaResumen('Conversaciones que quedaron sin responder', `${num(sinResponder)} (${pct(sinResponder, convs.length)})`, 'El último mensaje es del cliente');
 filaResumen('Mensajes con archivo adjunto', `${num(conMedia)} (${pct(conMedia, totalMensajes)})`, 'Fotos, documentos, audios, stickers');
-filaResumen('Mediana de tiempo de respuesta', `${String(resumen.mediana_global_respuesta_min).replace('.', ',')} min`, 'Mediana global reportada por el corpus; mediana de las medianas por conversación: ' + (medianaGlobal != null ? String(medianaGlobal).replace('.', ',') + ' min' : '—'));
+filaResumen('Mediana de tiempo de respuesta', `${num1(summary.global_median_response_min ?? 0)} min`, 'Mediana global reportada por el corpus; mediana de las medianas por conversación: ' + (medianaGlobal != null ? num1(medianaGlobal) + ' min' : '—'));
 filaResumen('Primer mensaje del historial', fechaHora(primerIso), '');
 filaResumen('Último mensaje del historial', fechaHora(ultimoIso), '');
 push([]);
@@ -239,7 +272,7 @@ push(['QUÉ TIPO DE MENSAJES SON'], 1);
 push(['Tipo', 'Cantidad', '% del corpus']);
 filasEstiloResumen[R.length] = 1;
 for (const [t, n] of Object.entries(porTipo).sort((a, b) => b[1] - a[1])) {
-  push([t, n, pct(n, totalMensajes)]);
+  push([tipoEs(t), n, pct(n, totalMensajes)]);
 }
 push([]);
 
@@ -247,7 +280,7 @@ push(['CRUCE CON EL CRM'], 1);
 push([
   `Sólo ${conCrm} de las ${convs.length} conversaciones (${pct(conCrm, convs.length)}) se pudieron cruzar con un contacto del CRM. ` +
     `El resto son números que no están cargados, o que están cargados con otro formato. ` +
-    `Esto limita cualquier análisis por tipo de cliente, estadio o localidad: la muestra con datos de CRM es demasiado chica para sacar conclusiones estadísticas.`,
+    `Esto limita cualquier análisis por segmento, estadio o localidad: la muestra con datos de CRM es demasiado chica para sacar conclusiones estadísticas.`,
 ]);
 push([]);
 
@@ -262,7 +295,7 @@ if (dimensiones.length === 0) {
 push(['#', 'Dimensión', 'Hallazgo', 'Qué dice', 'Medición', 'Confianza']);
 filasEstiloResumen[R.length] = 1;
 top10.forEach((h, i) => {
-  push([i + 1, h._dim || '', h.titulo || '', h.detalle || '', h.frecuencia || '', h.confianza || '']);
+  push([i + 1, h._dim || '', h.title || '', h.detail || '', h.frequency || '', confEs(h.confidence)]);
 });
 push([]);
 push(['CÓMO LEER ESTE ARCHIVO'], 1);
@@ -271,8 +304,8 @@ filasEstiloResumen[R.length] = 1;
 push(['Conversaciones', 'Una fila por conversación, con sus métricas y el cruce con el CRM. Ordenada de más a menos mensajes.']);
 push(['Transcripciones', 'Una fila por mensaje: todas las conversaciones crudas, en orden cronológico.']);
 for (const d of dimensiones) {
-  const r = String(d.resumen ?? '');
-  push([d.titulo || d.dimension, r.length > 400 ? r.slice(0, 400) + '…' : r]);
+  const r = String(d.summary ?? '');
+  push([d.title || d.key, r.length > 400 ? r.slice(0, 400) + '…' : r]);
 }
 push(['Metodologia', 'De dónde salieron los datos, qué se excluyó, qué NO se puede medir y qué cifras refutó la verificación.']);
 
@@ -288,12 +321,12 @@ agregarHoja({
 // =================================================== SHEET 2: Conversaciones
 
 const HDR_CONV = [
-  'conv_id',
+  'thread_id',
   'Número',
   'Nombre (WAHA o CRM)',
   '¿Matcheó CRM?',
   'Cliente / razón social (CRM)',
-  'Tipo de cliente (CRM)',
+  'Segmento (CRM)',
   'Estadio (CRM)',
   'Localidad (CRM)',
   'Total mensajes',
@@ -310,31 +343,31 @@ const HDR_CONV = [
 
 const filasConv = convs
   .slice()
-  .sort((a, b) => b.metricas.total - a.metricas.total)
+  .sort((a, b) => b.metrics.total - a.metrics.total)
   .map((c) => {
     const obs = [];
-    if (c.es_sistema) obs.push('Pseudo-contacto del sistema de WhatsApp, no es un cliente');
-    if (c.es_interno) obs.push('Conversación interna del negocio');
-    if (c.lid_sin_resolver) obs.push('LID sin resolver: el número puede no ser el real');
-    if (!c.metricas.ida_y_vuelta) obs.push('Sin ida y vuelta (escribió una sola de las dos partes)');
+    if (c.is_system) obs.push('Pseudo-contacto del sistema de WhatsApp, no es un cliente');
+    if (c.is_internal) obs.push('Conversación interna del negocio');
+    if (c.unresolved_lid) obs.push('LID sin resolver: el número puede no ser el real');
+    if (!c.metrics.two_way) obs.push('Sin ida y vuelta (escribió una sola de las dos partes)');
     return [
-      c.conv_id,
-      c.numero_display || c.numero || '',
-      c.nombre_waha || (c.crm ? c.crm.cliente : '') || '',
+      c.thread_id,
+      c.phone_display || c.phone || '',
+      c.contact_name || (c.crm ? c.crm.name : '') || '',
       c.crm ? 'Sí' : 'No',
-      c.crm ? c.crm.cliente || '' : '',
-      c.crm ? c.crm.tipo_cliente || '' : '',
-      c.crm ? c.crm.estadio_prospecto || '' : '',
-      c.crm ? c.crm.localidad || '' : '',
-      c.metricas.total,
-      c.metricas.entrantes,
-      c.metricas.salientes,
-      fechaHora(c.metricas.primer_mensaje),
-      fechaHora(c.metricas.ultimo_mensaje),
-      c.metricas.duracion_dias,
-      c.metricas.mediana_respuesta_min ?? '',
-      c.metricas.sin_responder ? 'Sí' : 'No',
-      c.metricas.con_media,
+      c.crm ? c.crm.name || '' : '',
+      c.crm ? c.crm.segment || '' : '',
+      c.crm ? c.crm.stage || '' : '',
+      c.crm ? c.crm.location || '' : '',
+      c.metrics.total,
+      c.metrics.inbound,
+      c.metrics.outbound,
+      fechaHora(c.metrics.first_message),
+      fechaHora(c.metrics.last_message),
+      c.metrics.duration_days,
+      c.metrics.median_response_min ?? '',
+      c.metrics.unanswered ? 'Sí' : 'No',
+      c.metrics.with_media,
       obs.join(' · '),
     ];
   });
@@ -352,27 +385,27 @@ agregarHoja({
 
 // ================================================== SHEET 3: Transcripciones
 
-const HDR_TR = ['conv_id', 'Número', 'Nombre', 'Fecha', 'Hora', 'Dirección', 'Tipo', 'Texto'];
+const HDR_TR = ['thread_id', 'Número', 'Nombre', 'Fecha', 'Hora', 'Dirección', 'Tipo', 'Texto'];
 const filasTr = [];
 for (const c of convs) {
-  const nombre = c.nombre_waha || (c.crm ? c.crm.cliente : '') || '';
-  for (const m of c.mensajes) {
+  const nombre = c.contact_name || (c.crm ? c.crm.name : '') || '';
+  for (const m of c.messages) {
     filasTr.push([
-      c.conv_id,
-      c.numero_display || c.numero || '',
+      c.thread_id,
+      c.phone_display || c.phone || '',
       nombre,
-      soloFecha(m.fecha_iso),
-      soloHora(m.fecha_iso),
-      m.direccion,
-      m.tipo,
-      celda(m.texto || ''),
+      soloFecha(m.iso),
+      soloHora(m.iso),
+      dirEs(m.direction),
+      tipoEs(m.type),
+      celda(m.text || ''),
     ]);
   }
 }
 
 agregarHoja({
   nombre: 'Transcripciones',
-  aoa: [HDR_TR, ...filasTr],
+  aoa: [HDR_TR, ...filasTr].map((f) => f.map((v) => (typeof v === 'number' ? v : celda(v)))),
   cols: [16, 20, 26, 12, 8, 12, 14, 120],
   autofiltro: { headerRow: 1 },
   filasEstilo: { 1: 1 },
@@ -383,20 +416,21 @@ agregarHoja({
 
 const hojasDimension = [];
 for (const d of dimensiones) {
-  const cols = (d.columnas_xlsx || []).slice();
-  const notas = d.notas_verificacion_filas || {};
+  const cols = (d.columns || []).slice();
+  const notas = d.row_verification_notes || {};
   const hayNotas = Object.keys(notas).length > 0;
-  const encabezado = hayNotas ? [...cols, 'Nota de verificación'] : cols;
+  const encabezado = cols.map((c) => c.label ?? c.key);
+  if (hayNotas) encabezado.push('Nota de verificación');
 
-  const filas = (d.filas_xlsx || []).map((f) => {
-    const base = cols.map((c) => (typeof f[c] === 'number' ? f[c] : celda(f[c] ?? '')));
+  const filas = (d.rows || []).map((f) => {
+    const base = cols.map((c) => (typeof f[c.key] === 'number' ? f[c.key] : celda(f[c.key] ?? '')));
     if (!hayNotas) return base;
-    const clave = String(f['#'] ?? '');
+    const clave = String(f.n ?? '');
     return [...base, celda(notas[clave] || '')];
   });
 
   const nombre = agregarHoja({
-    nombre: d.titulo || d.dimension,
+    nombre: d.title || d.key,
     aoa: [encabezado.map(celda), ...filas],
     cols: encabezado.map((c, i) => (i === 0 ? 5 : i === 1 ? 30 : i === encabezado.length - 1 && hayNotas ? 70 : 60)),
     autofiltro: { headerRow: 1 },
@@ -421,9 +455,9 @@ pm([]);
 
 pm('1. DE DÓNDE SALEN LOS DATOS', 1);
 pm([
-  `El origen es un dump completo del historial de WhatsApp del negocio exportado desde WAHA, sesión ${resumen.sesion_waha}, ` +
-    `generado el ${String(resumen.generado).slice(0, 10)}. Son ${num(resumen.lineas_leidas)} mensajes crudos en formato JSON, uno por línea. ` +
-    `De ahí se derivó el corpus de trabajo (threads.json + mensajes.csv), que es lo que alimenta este Excel. ` +
+  `El origen es un dump completo del historial de WhatsApp del negocio exportado desde WAHA, sesión ${summary.session}, ` +
+    `generado el ${String(summary.generated_at).slice(0, 10)}. Son ${num(summary.lines_read)} mensajes crudos en formato JSON, uno por línea. ` +
+    `De ahí se derivó el corpus de trabajo (threads.json + messages.csv), que es lo que alimenta este Excel. ` +
     `Nada de esto se subió a ningún servicio externo: el dump y el corpus quedan en el directorio de salida local, en la máquina que corrió el proceso.`,
 ]);
 pm([]);
@@ -433,19 +467,19 @@ pm(['Criterio', 'Cantidad', 'Por qué']);
 filasEstiloMet[M.length] = 1;
 pm([
   'Mensajes de grupos (@g.us)',
-  num(resumen.mensajes_excluidos_grupos),
+  num(summary.group_messages_excluded),
   'No son conversaciones comerciales 1 a 1 con un cliente; mezclan varios interlocutores y ensucian cualquier métrica de respuesta.',
 ]);
 pm([
   'Mensajes malformados / sin remitente',
-  num(resumen.mensajes_malformados + resumen.mensajes_sin_from),
-  resumen.mensajes_malformados + resumen.mensajes_sin_from === 0
+  num(summary.malformed_messages + summary.messages_without_sender),
+  summary.malformed_messages + summary.messages_without_sender === 0
     ? 'No hubo: el dump vino completo.'
     : 'Líneas del dump que no parsearon como JSON o mensajes sin remitente; quedan fuera del corpus y contados acá.',
 ]);
 pm([
   'Conversaciones internas del negocio',
-  String(resumen.conversaciones_internas),
+  String(summary.internal_threads),
   'Quedan EN el archivo pero marcadas en la columna Observación de la hoja Conversaciones, para que no se cuenten como clientes.',
 ]);
 pm([
@@ -455,37 +489,37 @@ pm([
 ]);
 pm([
   'Resultado',
-  num(resumen.mensajes_incluidos) + ' mensajes',
-  `Repartidos en ${num(resumen.conversaciones)} conversaciones. La suma cierra contra el dump original (verificación automática: ${resumen.verificacion_suma_ok ? 'OK' : 'FALLÓ'}).`,
+  num(summary.messages_included) + ' mensajes',
+  `Repartidos en ${num(summary.threads)} conversaciones. La suma cierra contra el dump original (verificación automática: ${summary.count_check_ok ? 'OK' : 'FALLÓ'}).`,
 ]);
 pm([]);
 
 pm('3. CÓMO SE RESOLVIERON LOS LID', 1);
 pm([
   'WhatsApp identifica a muchos contactos con un JID de tipo @lid (un identificador opaco) en vez del número de teléfono. En el dump crudo hay ' +
-    `${resumen.jids_lid} JIDs @lid y ${resumen.jids_cus} @c.us (número directo). Para poder juntar la conversación de una misma persona y para poder cruzarla con el CRM, ` +
+    `${summary.lid_jids} JIDs @lid y ${summary.cus_jids} @c.us (número directo). Para poder juntar la conversación de una misma persona y para poder cruzarla con el CRM, ` +
     `cada @lid se resolvió a su número real consultando el contacto en WAHA y cacheando el resultado (lid-cache.json en el directorio de salida).`,
 ]);
 pm(['Resultado del resolve', 'Cantidad', 'Consecuencia']);
 filasEstiloMet[M.length] = 1;
-pm(['LID resueltos a número real', num(resumen.lids_resueltos), 'Conversación atribuida al teléfono correcto.']);
+pm(['LID resueltos a número real', num(summary.lids_resolved), 'Conversación atribuida al teléfono correcto.']);
 pm([
   'LID que NO se pudieron resolver',
-  num(resumen.lids_no_resueltos),
+  num(summary.lids_unresolved),
   `Quedan en el archivo con el identificador crudo y marcados en la columna Observación ("LID sin resolver"). En esas ${lidSinResolver} conversaciones el "número" que se muestra puede no ser el teléfono real y no se puede cruzar con el CRM.`,
 ]);
 pm([
   'Fusiones @lid + @c.us',
-  String(resumen.fusiones_lid_cus),
-  `${resumen.conversaciones_multi_jid} conversaciones venían partidas en dos JIDs distintos de la misma persona y se unificaron en un solo hilo.`,
+  String(summary.lid_cus_merges),
+  `${summary.multi_jid_threads} conversaciones venían partidas en dos JIDs distintos de la misma persona y se unificaron en un solo hilo.`,
 ]);
 pm([]);
 
 pm('4. CRUCE CON EL CRM', 1);
 pm([
-  `El cruce con el CRM ${resumen.crm_disponible ? 'SÍ estuvo disponible' : 'NO estuvo disponible'}${resumen.crm_disponible ? `: matchearon ${resumen.match_crm} conversaciones de ${resumen.conversaciones} (${pct(resumen.match_crm, resumen.conversaciones)})` : ''}. ` +
-    `El match se hace por sufijo de teléfono (los últimos 10 dígitos), para saltear las diferencias de prefijo internacional y el 9 de celular argentino. ` +
-    `Las columnas de cliente, tipo de cliente, estadio y localidad de la hoja Conversaciones están vacías en las filas sin match: el número de WhatsApp no está cargado en el CRM o está cargado con otro formato.`,
+  `El cruce con el CRM ${summary.crm_available ? 'SÍ estuvo disponible' : 'NO estuvo disponible'}${summary.crm_available ? `: matchearon ${summary.crm_matches} conversaciones de ${summary.threads} (${pct(summary.crm_matches, summary.threads)})` : ''}. ` +
+    `El match se hace por número normalizado exacto y, como respaldo, por sufijo de teléfono (los últimos 10 dígitos), para saltear las diferencias de prefijo internacional y de formato de carga manual. ` +
+    `Las columnas de cliente, segmento, estadio y localidad de la hoja Conversaciones están vacías en las filas sin match: el número de WhatsApp no está cargado en el CRM o está cargado con otro formato.`,
 ]);
 pm([]);
 
@@ -495,7 +529,7 @@ filasEstiloMet[M.length] = 1;
 pm(['Total / Entrantes / Salientes', 'Conteo de mensajes del hilo. "Saliente" = fromMe en el dump, o sea escrito desde el WhatsApp del negocio (persona o bot, el dump no los distingue).']);
 pm(['Primer / Último mensaje', 'Fecha y hora local del primer y último mensaje del hilo, en formato YYYY-MM-DD HH:mm.']);
 pm(['Duración (días)', 'Días entre el primer y el último mensaje del hilo.']);
-pm(['Mediana de respuesta (min)', 'Mediana del tiempo entre un mensaje entrante y el primer saliente que le contesta. Sólo se calcula si hubo al menos una respuesta; queda vacía si no hubo ninguna.']);
+pm(['Mediana de respuesta (min)', 'Mediana del tiempo entre el PRIMER mensaje de cada racha entrante y el primer saliente que la contesta. Una racha sin respuesta no cuenta. Sólo se calcula si hubo al menos una respuesta; queda vacía si no hubo ninguna.']);
 pm(['¿Sin responder?', 'Sí = el último mensaje del hilo es del cliente. No implica necesariamente que se haya perdido la venta: puede haberse seguido por teléfono o mail.']);
 pm(['Mensajes con adjunto', 'Mensajes con media (foto, documento, audio, nota de voz, sticker, video).']);
 pm([]);
@@ -511,13 +545,14 @@ pm([
 ]);
 pm([]);
 
-pm('7. LO QUE ESTE ARCHIVO NO PUEDE DECIR (limitaciones declaradas por los analistas)', 1);
+pm('7. MÉTODO Y LÍMITES DE CADA DIMENSIÓN DE ANÁLISIS', 1);
 if (dimensiones.length === 0) {
   pm(['(No llegó ningún análisis de dimensiones al armar este archivo.)']);
 }
 for (const d of dimensiones) {
-  pm([`Dimensión: ${d.titulo || d.dimension}`], 1);
-  for (const l of d.limitaciones || []) pm(['• ' + l]);
+  pm([`Dimensión: ${d.title || d.key}`], 1);
+  if (d.method) pm(['Método: ' + d.method]);
+  for (const l of d.limitations || []) pm(['• ' + l]);
   pm([]);
 }
 
@@ -529,29 +564,29 @@ pm([
 ]);
 let hayRefutados = false;
 for (const d of dimensiones) {
-  const v = d.verdicto || {};
+  const v = d.verdict || {};
   pm([
-    `Dimensión: ${d.titulo || d.dimension} — hallazgos revisados: ${v.revisados ?? '—'}, confirmados: ${v.confirmados ?? '—'}, refutados: ${(v.refutados || []).length}`,
+    `Dimensión: ${d.title || d.key} — hallazgos revisados: ${v.reviewed ?? '—'}, confirmados: ${v.confirmed ?? '—'}, refutados: ${(v.refuted || []).length}`,
   ], 1);
   pm(['Hallazgo refutado', 'Por qué no se sostiene', 'Cifra corregida']);
   filasEstiloMet[M.length] = 1;
-  for (const r of v.refutados || []) {
+  for (const r of v.refuted || []) {
     hayRefutados = true;
-    pm([r.titulo || '', r.por_que || '', r.correccion || '(no se recibió corrección)']);
+    pm([r.title || '', r.reason || '', r.correction || '(no se recibió corrección)']);
   }
-  if (!(v.refutados || []).length) pm(['(ninguno)', '', '']);
+  if (!(v.refuted || []).length) pm(['(ninguno)', '', '']);
   pm([]);
 }
 if (!hayRefutados) pm(['(No se registraron hallazgos refutados.)']);
 
 pm('9. ADVERTENCIAS DE LA CORRIDA QUE GENERÓ EL CORPUS', 1);
-for (const a of resumen.advertencias || []) pm(['• ' + a]);
+for (const a of summary.warnings || []) pm(['• ' + a]);
 pm([]);
 
 pm('10. REPRODUCIBILIDAD', 1);
 pm([
-  'Este archivo lo genera src/report-xlsx.mjs (node src/report-xlsx.mjs) leyendo threads.json, resumen-corpus.json y ' +
-    'analisis-dimensiones.json del directorio de salida. Todos los números de la hoja Resumen se recalculan en cada corrida a partir del corpus. ' +
+  'Este archivo lo genera src/report-xlsx.mjs (node src/report-xlsx.mjs) leyendo threads.json, summary.json y ' +
+    'analysis.json del directorio de salida. Todos los números de la hoja Resumen se recalculan en cada corrida a partir del corpus. ' +
     'Los textos de las hojas de dimensión vienen tal cual del análisis verificado; el script no los reinterpreta.',
 ]);
 
@@ -596,12 +631,12 @@ orden.forEach((nombre, i) => {
   const ruta = `/xl/worksheets/sheet${i + 1}.xml`;
   let xml = contenido(ruta);
   if (xml == null) throw new Error('missing ' + ruta);
-  const cfg = estilos.find((e) => e.nombre === nombre);
-  if (!cfg) return;
+  const cfgHoja = estilos.find((e) => e.nombre === nombre);
+  if (!cfgHoja) return;
 
   // 1) freeze rows
-  if (cfg.freezeRow > 0) {
-    const n = cfg.freezeRow;
+  if (cfgHoja.freezeRow > 0) {
+    const n = cfgHoja.freezeRow;
     const pane =
       `<sheetViews><sheetView workbookViewId="0">` +
       `<pane ySplit="${n}" topLeftCell="A${n + 1}" activePane="bottomLeft" state="frozen"/>` +
@@ -611,10 +646,10 @@ orden.forEach((nombre, i) => {
   }
 
   // 2) per-row styles
-  const conEstilo = Object.keys(cfg.filas).length > 0 || cfg.bodyStyle;
+  const conEstilo = Object.keys(cfgHoja.filas).length > 0 || cfgHoja.bodyStyle;
   if (conEstilo) {
     xml = xml.replace(/<row r="(\d+)"([^>]*)>([\s\S]*?)<\/row>/g, (todo, r, attrs, cuerpo) => {
-      const s = cfg.filas[Number(r)] ?? cfg.bodyStyle;
+      const s = cfgHoja.filas[Number(r)] ?? cfgHoja.bodyStyle;
       if (!s) return todo;
       const nuevoCuerpo = cuerpo.replace(/<c /g, `<c s="${s}" `);
       return `<row r="${r}"${attrs}>${nuevoCuerpo}</row>`;
@@ -631,28 +666,28 @@ const leido = XLSX.readFile(OUT);
 const conteos = {};
 for (const n of leido.SheetNames) {
   const rango = XLSX.utils.decode_range(leido.Sheets[n]['!ref']);
-  conteos[n] = { filas: rango.e.r + 1, columnas: rango.e.c + 1 };
+  conteos[n] = { rows: rango.e.r + 1, cols: rango.e.c + 1 };
 }
 
-const filasTranscripciones = conteos['Transcripciones'].filas - 1; // minus header
-const filasConversaciones = conteos['Conversaciones'].filas - 1;
+const filasTranscripciones = conteos['Transcripciones'].rows - 1; // minus header
+const filasConversaciones = conteos['Conversaciones'].rows - 1;
 const okTr = filasTranscripciones === totalMensajes;
 const okConv = filasConversaciones === convs.length;
 const tam = fs.statSync(OUT).size;
 
 console.log(JSON.stringify(
   {
-    archivo: OUT,
-    tamano_mb: +(tam / 1024 / 1024).toFixed(2),
-    hojas: conteos,
-    mensajes_en_corpus: totalMensajes,
-    filas_datos_transcripciones: filasTranscripciones,
-    coincide_transcripciones: okTr,
-    conversaciones_en_corpus: convs.length,
-    filas_datos_conversaciones: filasConversaciones,
-    coincide_conversaciones: okConv,
-    celdas_truncadas: truncados,
-    dimensiones_incluidas: hojasDimension.map((h) => h.nombre),
+    file: OUT,
+    size_mb: +(tam / 1024 / 1024).toFixed(2),
+    sheets: conteos,
+    messages_in_corpus: totalMensajes,
+    transcript_data_rows: filasTranscripciones,
+    transcripts_match: okTr,
+    threads_in_corpus: convs.length,
+    thread_data_rows: filasConversaciones,
+    threads_match: okConv,
+    truncated_cells: truncados,
+    dimensions_included: hojasDimension.map((h) => h.nombre),
   },
   null,
   2

@@ -1,0 +1,23 @@
+{
+  "business": {
+    "name": "My Business",
+    "internalNumbers": [],
+    "internalEmailDomains": []
+  },
+  "phone": {
+    "defaultCountry": "AR"
+  },
+  "timezone": {
+    "utcOffset": "-03:00"
+  },
+  "locale": "es-AR",
+  "output": {
+    "dir": "data/wa-history"
+  },
+  "report": {
+    "filename": "whatsapp-report.xlsx"
+  },
+  "crm": {
+    "file": null
+  }
+}

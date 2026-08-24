@@ -1,29 +1,25 @@
 /**
  * Clean conversation corpus from the raw WAHA dump.
- * Phase 3 of the export (phase 2 = src/export.mjs).
+ * Phase 3 of the pipeline (phase 2 = src/export.mjs).
  *
  *   node --env-file=waha.env src/threads.mjs [--session <name>] [--no-net]
  *
  * What it does:
- *   1. Streams data/wa-history/messages.jsonl line by line.
+ *   1. Streams <out>/messages.jsonl line by line.
  *   2. Excludes group chats (@g.us).
  *   3. Resolves @lid identifiers to real numbers via WAHA, with an on-disk
  *      cache so hundreds of requests are not repeated.
- *   4. Normalizes phone numbers (AR mobile rules for +54; foreign numbers are
- *      kept in E.164 untouched — see normalizeNumber()).
+ *   4. Normalizes phone numbers (src/lib/phone.mjs — WhatsApp-JID rules, with
+ *      the AR mobile-9 collapse; foreign numbers stay untouched).
  *   5. Groups by normalized number, so a client that appears both as @lid and
- *      as @c.us counts as ONE conversation.
- *   6. Joins against the CRM if data/wa-history/crm-contacts.json exists.
- *   7. Computes per-conversation metrics and writes threads.json, mensajes.csv
- *      and resumen-corpus.json.
+ *      as @c.us counts as ONE thread.
+ *   6. Joins against the optional CRM CSV (src/lib/crm.mjs).
+ *   7. Computes per-thread metrics and writes threads.json, messages.csv and
+ *      summary.json — schema_version 1, documented in docs/data-contract.md.
  *
  * Env (only for step 3; with --no-net none is needed):
- *   WAHA_BASE_URL, WAHA_API_KEY, WAHA_BASIC_AUTH ("user:password")
- * Optional env:
- *   WA_OUT_DIR                 default data/wa-history (gitignored: real chats)
- *   WAHA_SESSION               session name (or --session)
- *   WA_INTERNAL_EMAIL_DOMAINS  comma-separated email domains that mark a CRM
- *                              contact as an internal line of the business
+ *   WAHA_BASE_URL, WAHA_API_KEY, WAHA_BASIC_AUTH ("user:password"), WAHA_SESSION
+ * Configuration: wa-audit.config.json + env overrides (src/lib/config.mjs).
  *
  * Only reads from WAHA and writes local files.
  */
@@ -31,16 +27,19 @@ import { createReadStream, existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import path from 'node:path';
+import { loadConfig } from './lib/config.mjs';
+import { normalizeJid, normalizeInput, display } from './lib/phone.mjs';
+import { loadCrm, matchCrm } from './lib/crm.mjs';
 
 // ---------------------------------------------------------------- config ---
 
-const OUT_DIR = process.env.WA_OUT_DIR ?? 'data/wa-history';
+const cfg = loadConfig();
+const OUT_DIR = cfg.output.dir;
 const MESSAGES_FILE = path.join(OUT_DIR, 'messages.jsonl');
 const LID_CACHE_FILE = path.join(OUT_DIR, 'lid-cache.json');
-const CRM_FILE = path.join(OUT_DIR, 'crm-contacts.json');
 const THREADS_FILE = path.join(OUT_DIR, 'threads.json');
-const CSV_FILE = path.join(OUT_DIR, 'mensajes.csv');
-const RESUMEN_FILE = path.join(OUT_DIR, 'resumen-corpus.json');
+const CSV_FILE = path.join(OUT_DIR, 'messages.csv');
+const SUMMARY_FILE = path.join(OUT_DIR, 'summary.json');
 
 const argv = process.argv.slice(2);
 const argSession = argv.includes('--session') ? argv[argv.indexOf('--session') + 1] : null;
@@ -48,15 +47,16 @@ const SESSION = argSession ?? process.env.WAHA_SESSION ?? '';
 const NO_NET = argv.includes('--no-net');
 const CONCURRENCY = 6;
 const RETRIES = 3;
-/** Fixed offset for now (Argentina has no DST). A proper config replaces this in v0.2. */
-const TZ_OFFSET_MIN = -180;
 
-/** Internal lines of the business (their CRM contact carries a company email).
- *  They are not clients: left unmarked they distort every average. */
-const INTERNAL_EMAIL_DOMAINS = (process.env.WA_INTERNAL_EMAIL_DOMAINS ?? '')
-  .split(',')
-  .map((d) => d.trim().toLowerCase())
-  .filter(Boolean);
+const TZ_MIN = cfg.timezone.offsetMinutes;
+const TZ_SUFFIX = cfg.timezone.utcOffset;
+
+const INTERNAL_DOMAINS = cfg.business.internalEmailDomains.map((d) => d.toLowerCase());
+const INTERNAL_NUMBERS = new Set(
+  cfg.business.internalNumbers
+    .map((n) => normalizeInput(n, cfg.phone.defaultCountry))
+    .filter(Boolean),
+);
 
 const BASE = (process.env.WAHA_BASE_URL ?? '').replace(/\/+$/, '');
 const HEADERS = { 'X-Api-Key': process.env.WAHA_API_KEY ?? '', Accept: 'application/json' };
@@ -64,61 +64,26 @@ if (process.env.WAHA_BASIC_AUTH) {
   HEADERS.Authorization = `Basic ${Buffer.from(process.env.WAHA_BASIC_AUTH, 'utf8').toString('base64')}`;
 }
 
-// Warnings travel into resumen-corpus.json (and from there into the report's
-// methodology sheet), so their wording is part of the data contract — Spanish
-// until contract v1 lands.
-const advertencias = [];
+// Warnings travel into summary.json and from there into the report's
+// methodology sheet: processing anomalies must reach the person reading the
+// deliverable, not just a terminal nobody watches.
+const warnings = [];
 const warn = (msg) => {
-  if (!advertencias.includes(msg)) advertencias.push(msg);
+  if (!warnings.includes(msg)) warnings.push(msg);
   console.warn(`  ! ${msg}`);
 };
 
-// ------------------------------------------------------------ phone numbers ---
-
-/**
- * Normalizes to E.164. For Argentina: ALWAYS +549 + 10 digits, so that
- * 5491155501234 and 541155501234 collapse to the same number (the mobile "9"
- * is optional in the JID).
- *
- * Deliberate: we do NOT force +549 onto non-Argentine numbers. Dumps contain
- * chats from Chile, Brazil, Spain, etc.; forcing the prefix would corrupt them
- * and could merge two different clients into a single thread.
- */
-function normalizeNumber(raw) {
-  const digits = String(raw ?? '').replace(/\D/g, '');
-  if (!digits) return null;
-  if (digits.startsWith('54')) {
-    let rest = digits.slice(2);
-    // The Argentine mobile "9" is optional in the JID: always strip it.
-    if (rest.startsWith('9') && rest.length >= 11) rest = rest.slice(1);
-    if (!rest) return null;
-    return '+549' + rest.slice(0, 10);
-  }
-  return '+' + digits;
-}
-
-/** Readable format; for AR splits 54 9 <area+line>. */
-function displayNumber(e164) {
-  if (!e164) return null;
-  if (e164.startsWith('+549') && e164.length === 14) {
-    const d = e164.slice(4);
-    return `+54 9 ${d.slice(0, 2)} ${d.slice(2, 6)}-${d.slice(6)}`;
-  }
-  return e164;
-}
-
 // ------------------------------------------------------------------ misc ---
 
-const isoLocal = (ts) => new Date((ts + TZ_OFFSET_MIN * 60) * 1000).toISOString().replace('Z', '-03:00');
-const horaLocal = (ts) => new Date((ts + TZ_OFFSET_MIN * 60) * 1000).getUTCHours();
+const isoLocal = (ts) => new Date((ts + TZ_MIN * 60) * 1000).toISOString().replace('Z', TZ_SUFFIX);
+const hourLocal = (ts) => new Date((ts + TZ_MIN * 60) * 1000).getUTCHours();
 
-// Slot labels are part of the corpus contract (they land in threads.json) —
-// Spanish until contract v1 lands.
-function franja(hour) {
-  if (hour < 6) return 'madrugada (00-05)';
-  if (hour < 12) return 'mañana (06-11)';
-  if (hour < 19) return 'tarde (12-18)';
-  return 'noche (19-23)';
+// Contract enum. Labels ("madrugada (00-05)") are presentation, not data.
+function timeSlot(hour) {
+  if (hour < 6) return 'early_morning';
+  if (hour < 12) return 'morning';
+  if (hour < 19) return 'afternoon';
+  return 'evening';
 }
 
 function median(nums) {
@@ -130,22 +95,22 @@ function median(nums) {
 
 /** Message type: the dump was taken with downloadMedia=false, so `media` is
  *  null and the real type lives in _data.message (NOWEB shape). */
-function tipoMensaje(m) {
+function messageType(m) {
   const msg = m?._data?.message ?? null;
   if (msg) {
-    if (msg.imageMessage) return 'imagen';
+    if (msg.imageMessage) return 'image';
     if (msg.videoMessage) return 'video';
-    if (msg.audioMessage) return msg.audioMessage.ptt ? 'nota_de_voz' : 'audio';
-    if (msg.documentMessage) return 'documento';
+    if (msg.audioMessage) return msg.audioMessage.ptt ? 'voice_note' : 'audio';
+    if (msg.documentMessage) return 'document';
     if (msg.stickerMessage || msg.lottieStickerMessage) return 'sticker';
-    if (msg.contactMessage || msg.contactsArrayMessage) return 'contacto';
-    if (msg.locationMessage) return 'ubicacion';
-    if (msg.buttonsMessage) return 'botones';
+    if (msg.contactMessage || msg.contactsArrayMessage) return 'contact';
+    if (msg.locationMessage) return 'location';
+    if (msg.buttonsMessage) return 'buttons';
   }
-  if (m.location) return 'ubicacion';
-  if (Array.isArray(m.vCards) && m.vCards.length) return 'contacto';
+  if (m.location) return 'location';
+  if (Array.isArray(m.vCards) && m.vCards.length) return 'contact';
   if (m.hasMedia) return 'media';
-  return 'texto';
+  return 'text';
 }
 
 // -------------------------------------------------- @lid resolution ---
@@ -224,52 +189,52 @@ if (!existsSync(MESSAGES_FILE)) {
   process.exit(1);
 }
 
-/** jid -> { jid, mensajes: [] } */
-const porJid = new Map();
-let lineas = 0;
-let malformadas = 0;
-let excluidosGrupo = 0;
-let incluidos = 0;
-let sinFrom = 0;
+/** jid -> { jid, messages: [] } */
+const byJid = new Map();
+let linesRead = 0;
+let malformed = 0;
+let groupExcluded = 0;
+let included = 0;
+let noSender = 0;
 const pushNames = new Map(); // jid -> pushName seen (almost always empty in practice)
 
 await new Promise((resolve, reject) => {
   const rl = createInterface({ input: createReadStream(MESSAGES_FILE, 'utf8'), crlfDelay: Infinity });
   rl.on('line', (line) => {
     if (!line.trim()) return;
-    lineas++;
+    linesRead++;
     let m;
-    try { m = JSON.parse(line); } catch { malformadas++; return; }
+    try { m = JSON.parse(line); } catch { malformed++; return; }
     const from = typeof m.from === 'string' ? m.from : '';
-    if (!from) { sinFrom++; return; }
-    if (from.includes('@g.us')) { excluidosGrupo++; return; }
-    incluidos++;
-    let bucket = porJid.get(from);
-    if (!bucket) { bucket = { jid: from, mensajes: [] }; porJid.set(from, bucket); }
+    if (!from) { noSender++; return; }
+    if (from.includes('@g.us')) { groupExcluded++; return; }
+    included++;
+    let bucket = byJid.get(from);
+    if (!bucket) { bucket = { jid: from, messages: [] }; byJid.set(from, bucket); }
     const pn = m?._data?.pushName;
     if (pn && !m.fromMe && !pushNames.has(from)) pushNames.set(from, String(pn));
-    bucket.mensajes.push({
+    bucket.messages.push({
       ts: m.timestamp,
-      direccion: m.fromMe ? 'saliente' : 'entrante',
-      tipo: tipoMensaje(m),
-      texto: typeof m.body === 'string' ? m.body : '',
-      tiene_media: !!m.hasMedia,
+      direction: m.fromMe ? 'outbound' : 'inbound',
+      type: messageType(m),
+      text: typeof m.body === 'string' ? m.body : '',
+      has_media: !!m.hasMedia,
     });
   });
   rl.on('close', resolve);
   rl.on('error', reject);
 });
 
-console.log(`  ${lineas} lines · ${excluidosGrupo} group messages excluded · ${incluidos} included · ${porJid.size} 1-to-1 chats`);
-if (malformadas) warn(`${malformadas} líneas de messages.jsonl no parsearon como JSON y quedaron fuera del corpus`);
-if (sinFrom) warn(`${sinFrom} mensajes sin campo "from" quedaron fuera del corpus`);
+console.log(`  ${linesRead} lines · ${groupExcluded} group messages excluded · ${included} included · ${byJid.size} 1-to-1 chats`);
+if (malformed) warn(`${malformed} lines of messages.jsonl did not parse as JSON and were left out of the corpus`);
+if (noSender) warn(`${noSender} messages without a "from" field were left out of the corpus`);
 
 // --------------------------------------------------- 2) resolve @lid ---
 
-const lids = [...porJid.keys()].filter((j) => j.endsWith('@lid'));
-const cusJids = [...porJid.keys()].filter((j) => j.endsWith('@c.us'));
-const otrosJids = [...porJid.keys()].filter((j) => !j.endsWith('@lid') && !j.endsWith('@c.us'));
-if (otrosJids.length) warn(`${otrosJids.length} JIDs con sufijo inesperado (ej. ${otrosJids[0]}); se tratan como número crudo`);
+const lids = [...byJid.keys()].filter((j) => j.endsWith('@lid'));
+const cusJids = [...byJid.keys()].filter((j) => j.endsWith('@c.us'));
+const otherJids = [...byJid.keys()].filter((j) => !j.endsWith('@lid') && !j.endsWith('@c.us'));
+if (otherJids.length) warn(`${otherJids.length} JIDs with an unexpected suffix (e.g. ${otherJids[0]}); treated as raw numbers`);
 
 /** jid -> { pn, name } */
 let cache = {};
@@ -278,279 +243,265 @@ if (existsSync(LID_CACHE_FILE)) {
   console.log(`Resolution cache: ${Object.keys(cache).length} entries in ${LID_CACHE_FILE}`);
 }
 
-const pendientesLid = lids.filter((l) => !(l in cache));
-const pendientesNombre = cusJids.filter((j) => !(j in cache));
+const pendingLids = lids.filter((l) => !(l in cache));
+const pendingNames = cusJids.filter((j) => !(j in cache));
 
 if (NO_NET) {
-  if (pendientesLid.length) warn(`--no-net: ${pendientesLid.length} @lid sin resolver (no se consultó WAHA)`);
+  if (pendingLids.length) warn(`--no-net: ${pendingLids.length} @lid left unresolved (WAHA was not queried)`);
 } else if (!BASE || !HEADERS['X-Api-Key'] || !SESSION) {
-  warn('Faltan WAHA_BASE_URL / WAHA_API_KEY / sesión: no se resolvió ningún @lid nuevo');
+  warn('Missing WAHA_BASE_URL / WAHA_API_KEY / session: no new @lid was resolved');
 } else {
-  if (pendientesLid.length) {
-    console.log(`Resolving ${pendientesLid.length} @lid against WAHA (session "${SESSION}", concurrency ${CONCURRENCY})...`);
-    await pool(pendientesLid, CONCURRENCY, async (lid) => { cache[lid] = await resolveLid(lid); });
+  if (pendingLids.length) {
+    console.log(`Resolving ${pendingLids.length} @lid against WAHA (session "${SESSION}", concurrency ${CONCURRENCY})...`);
+    await pool(pendingLids, CONCURRENCY, async (lid) => { cache[lid] = await resolveLid(lid); });
     await writeFile(LID_CACHE_FILE, JSON.stringify(cache, null, 2), 'utf8');
   }
-  if (pendientesNombre.length) {
-    console.log(`Fetching names for ${pendientesNombre.length} @c.us contacts...`);
-    await pool(pendientesNombre, CONCURRENCY, async (jid) => { cache[jid] = await resolveName(jid); });
+  if (pendingNames.length) {
+    console.log(`Fetching names for ${pendingNames.length} @c.us contacts...`);
+    await pool(pendingNames, CONCURRENCY, async (jid) => { cache[jid] = await resolveName(jid); });
   }
   await writeFile(LID_CACHE_FILE, JSON.stringify(cache, null, 2), 'utf8');
   console.log(`  cache saved to ${LID_CACHE_FILE}`);
 }
 
-let lidsResueltos = 0;
-let lidsNoResueltos = 0;
+let lidsResolved = 0;
+let lidsUnresolved = 0;
 for (const lid of lids) {
-  if (normalizeNumber(cache[lid]?.pn ?? '')) lidsResueltos++;
-  else lidsNoResueltos++;
+  if (normalizeJid(cache[lid]?.pn ?? '')) lidsResolved++;
+  else lidsUnresolved++;
 }
-console.log(`  @lid: ${lids.length} distinct · ${lidsResueltos} resolved · ${lidsNoResueltos} unresolved`);
+console.log(`  @lid: ${lids.length} distinct · ${lidsResolved} resolved · ${lidsUnresolved} unresolved`);
 
 // ------------------------------------------- 3) unify by number ---
 
-/** key -> { numero, jids, nombres, mensajes } */
+/** key -> { phone, jids, names, messages } */
 const convs = new Map();
-let fusiones = 0;
+let merges = 0;
 
 /** WhatsApp system pseudo-contacts, not clients. */
-const SISTEMA = new Set(['0@c.us', 'status@broadcast']);
+const SYSTEM = new Set(['0@c.us', 'status@broadcast']);
 
-for (const [jid, bucket] of porJid) {
-  if (SISTEMA.has(jid)) {
-    warn(`${jid} es un pseudo-contacto del sistema de WhatsApp (${bucket.mensajes.length} mensaje/s), queda marcado con es_sistema=true`);
+for (const [jid, bucket] of byJid) {
+  if (SYSTEM.has(jid)) {
+    warn(`${jid} is a WhatsApp system pseudo-contact (${bucket.messages.length} message/s); flagged with is_system=true`);
   }
-  const esLid = jid.endsWith('@lid');
-  const crudo = esLid ? (cache[jid]?.pn ?? '') : jid.split('@')[0];
-  const numero = normalizeNumber(crudo);
+  const isLid = jid.endsWith('@lid');
+  const rawNumber = isLid ? (cache[jid]?.pn ?? '') : jid.split('@')[0];
+  const phone = normalizeJid(rawNumber);
   // An unresolved @lid can NOT be normalized: its digits are not a phone
-  // number. It gets its own conversation and a flag — never an invented number.
-  const key = numero ?? `lid:${jid.split('@')[0]}`;
+  // number. It gets its own thread and a flag — never an invented number.
+  const key = phone ?? `lid:${jid.split('@')[0]}`;
 
   let c = convs.get(key);
   if (!c) {
-    c = { key, numero, jids: [], origenes: new Set(), nombres: [], mensajes: [], lid_sin_resolver: !numero, es_sistema: SISTEMA.has(jid) };
+    c = { key, phone, jids: [], origins: new Set(), names: [], messages: [], unresolved_lid: !phone, is_system: SYSTEM.has(jid) };
     convs.set(key, c);
   }
-  const origen = esLid ? 'lid' : 'c.us';
-  if (numero && c.origenes.size && !c.origenes.has(origen)) fusiones++;
-  c.origenes.add(origen);
+  const origin = isLid ? 'lid' : 'c.us';
+  if (phone && c.origins.size && !c.origins.has(origin)) merges++;
+  c.origins.add(origin);
   c.jids.push(jid);
-  const nombre = cache[jid]?.name || pushNames.get(jid) || null;
-  if (nombre) c.nombres.push(nombre);
-  c.mensajes.push(...bucket.mensajes);
+  const name = cache[jid]?.name || pushNames.get(jid) || null;
+  if (name) c.names.push(name);
+  c.messages.push(...bucket.messages);
 }
 
-console.log(`  ${convs.size} conversations · ${fusiones} @lid + @c.us merges`);
+console.log(`  ${convs.size} threads · ${merges} @lid + @c.us merges`);
 
 // ------------------------------------------------------ 4) CRM (optional) ---
 
-let crmDisponible = false;
-let matchCrm = 0;
-/** E.164 number -> CRM row */
-const crmPorNumero = new Map();
-if (existsSync(CRM_FILE)) {
+let crm = null;
+let crmMatches = 0;
+if (cfg.crm.file) {
   try {
-    const filas = JSON.parse(await readFile(CRM_FILE, 'utf8'));
-    if (Array.isArray(filas)) {
-      crmDisponible = true;
-      for (const f of filas) {
-        // `match_suf` = the 10 significant digits of the AR number the join was
-        // precomputed with. It takes priority because hand-loaded CRM phones
-        // come in every imaginable format (e.g. "0341- 555 0678 / 0341-555-0884",
-        // "115-555-1720"): normalizing them one by one loses most matches.
-        if (f.match_suf) {
-          const n = '+549' + String(f.match_suf);
-          if (!crmPorNumero.has(n)) crmPorNumero.set(n, f);
-          continue;
-        }
-        for (const campo of [f.telefono, f.whatsapp]) {
-          const n = normalizeNumber(campo ?? '');
-          if (n && !crmPorNumero.has(n)) crmPorNumero.set(n, f);
-        }
-      }
-      console.log(`CRM: ${filas.length} contacts, ${crmPorNumero.size} distinct normalized numbers`);
-    }
+    crm = loadCrm(cfg.crm.file, cfg.phone.defaultCountry);
+    console.log(`CRM: ${crm.rows.length} contacts, ${crm.byNumber.size} distinct normalized numbers`);
   } catch (e) {
-    warn(`No se pudo leer ${CRM_FILE}: ${String(e).slice(0, 120)}`);
+    warn(`Could not read CRM file ${cfg.crm.file}: ${String(e).slice(0, 120)}`);
+    crm = null;
   }
 } else {
-  warn(`No hay ${CRM_FILE}: el corpus queda sin cruce con el CRM (crm_disponible=false)`);
+  warn('No CRM file configured (crm.file): the corpus carries no CRM join (crm_available=false)');
 }
 
 // ---------------------------------------------------------- 5) metrics ---
 
-function metricas(msgs) {
-  const orden = [...msgs].sort((a, b) => a.ts - b.ts);
-  const entrantes = orden.filter((m) => m.direccion === 'entrante').length;
-  const salientes = orden.length - entrantes;
-  const conMedia = orden.filter((m) => m.tiene_media).length;
-  const primero = orden[0];
-  const ultimo = orden[orden.length - 1];
+function computeMetrics(msgs) {
+  const ordered = [...msgs].sort((a, b) => a.ts - b.ts);
+  const inbound = ordered.filter((m) => m.direction === 'inbound').length;
+  const outbound = ordered.length - inbound;
+  const withMedia = ordered.filter((m) => m.has_media).length;
+  const first = ordered[0];
+  const last = ordered[ordered.length - 1];
 
   // Response time: for each burst of consecutive inbound messages, how long
   // until the first outbound reply. A burst that never got a reply doesn't count.
-  const respuestas = [];
-  let abierto = null;
-  for (const m of orden) {
-    if (m.direccion === 'entrante') { if (abierto === null) abierto = m.ts; }
-    else if (abierto !== null) { respuestas.push((m.ts - abierto) / 60); abierto = null; }
+  const responses = [];
+  let open = null;
+  for (const m of ordered) {
+    if (m.direction === 'inbound') { if (open === null) open = m.ts; }
+    else if (open !== null) { responses.push((m.ts - open) / 60); open = null; }
   }
 
-  const horas = new Map();
-  const franjas = new Map();
-  for (const m of orden) {
-    const h = horaLocal(m.ts);
-    horas.set(h, (horas.get(h) ?? 0) + 1);
-    const f = franja(h);
-    franjas.set(f, (franjas.get(f) ?? 0) + 1);
+  const hours = new Map();
+  const slots = new Map();
+  for (const m of ordered) {
+    const h = hourLocal(m.ts);
+    hours.set(h, (hours.get(h) ?? 0) + 1);
+    const s = timeSlot(h);
+    slots.set(s, (slots.get(s) ?? 0) + 1);
   }
-  const topFranja = [...franjas.entries()].sort((a, b) => b[1] - a[1])[0];
-  const topHora = [...horas.entries()].sort((a, b) => b[1] - a[1])[0];
+  const topSlot = [...slots.entries()].sort((a, b) => b[1] - a[1])[0];
+  const topHour = [...hours.entries()].sort((a, b) => b[1] - a[1])[0];
 
-  const med = median(respuestas);
+  const med = median(responses);
   return {
-    total: orden.length,
-    entrantes,
-    salientes,
-    con_media: conMedia,
-    primer_mensaje: isoLocal(primero.ts),
-    ultimo_mensaje: isoLocal(ultimo.ts),
-    duracion_dias: Math.round(((ultimo.ts - primero.ts) / 86400) * 10) / 10,
-    respuestas_medidas: respuestas.length,
-    mediana_respuesta_min: med === null ? null : Math.round(med * 10) / 10,
-    sin_responder: ultimo.direccion === 'entrante',
-    franja_mas_frecuente: topFranja ? topFranja[0] : null,
-    hora_pico: topHora ? topHora[0] : null,
-    ida_y_vuelta: entrantes > 0 && salientes > 0,
+    total: ordered.length,
+    inbound,
+    outbound,
+    with_media: withMedia,
+    first_message: isoLocal(first.ts),
+    last_message: isoLocal(last.ts),
+    duration_days: Math.round(((last.ts - first.ts) / 86400) * 10) / 10,
+    responses_measured: responses.length,
+    median_response_min: med === null ? null : Math.round(med * 10) / 10,
+    unanswered: last.direction === 'inbound',
+    top_time_slot: topSlot ? topSlot[0] : null,
+    peak_hour: topHour ? topHour[0] : null,
+    two_way: inbound > 0 && outbound > 0,
   };
 }
 
 const threads = [];
-let internas = 0;
+let internal = 0;
 for (const c of convs.values()) {
-  const msgs = [...c.mensajes].sort((a, b) => a.ts - b.ts);
-  const crm = c.numero ? (crmPorNumero.get(c.numero) ?? null) : null;
-  if (crm) matchCrm++;
-  const nombre = c.nombres.find(Boolean) ?? null;
-  const email = crm && typeof crm.email === 'string' ? crm.email.toLowerCase() : '';
-  const esInterno = !!email && INTERNAL_EMAIL_DOMAINS.some((d) => email.includes('@' + d));
-  if (esInterno) internas++;
+  const msgs = [...c.messages].sort((a, b) => a.ts - b.ts);
+  const crmRow = c.phone ? matchCrm(crm, c.phone) : null;
+  if (crmRow) crmMatches++;
+  const name = c.names.find(Boolean) ?? null;
+  const email = (crmRow?.email ?? '').toLowerCase();
+  const isInternal =
+    (!!email && INTERNAL_DOMAINS.some((d) => email.includes('@' + d))) ||
+    (!!c.phone && INTERNAL_NUMBERS.has(c.phone));
+  if (isInternal) internal++;
   threads.push({
-    conv_id: c.numero ? c.numero.replace('+', '') : `lid_${c.key.slice(4)}`,
-    numero: c.numero,
-    numero_display: c.numero ? displayNumber(c.numero) : `@lid ${c.key.slice(4)} (sin resolver)`,
+    thread_id: c.phone ? c.phone.replace('+', '') : `lid_${c.key.slice(4)}`,
+    phone: c.phone,
+    phone_display: c.phone ? display(c.phone) : `@lid ${c.key.slice(4)} (unresolved)`,
     jids: c.jids,
-    nombre_waha: nombre,
-    lid_sin_resolver: c.lid_sin_resolver,
-    es_sistema: !!c.es_sistema,
-    es_interno: esInterno,
-    crm: crm
+    contact_name: name,
+    unresolved_lid: c.unresolved_lid,
+    is_system: !!c.is_system,
+    is_internal: isInternal,
+    crm: crmRow
       ? {
-          id: crm.id ?? null,
-          cliente: crm.cliente ?? null,
-          contacto: crm.contacto ?? null,
-          telefono: crm.telefono ?? null,
-          whatsapp: crm.whatsapp ?? null,
-          email: crm.email ?? null,
-          tipo_cliente: crm.tipo_cliente ?? null,
-          estadio_prospecto: crm.estadio_prospecto ?? null,
-          localidad: crm.localidad ?? null,
-          cod_cliente: crm.cod_cliente ?? null,
+          name: crmRow.name,
+          contact: crmRow.contact,
+          phone: crmRow.phone,
+          whatsapp: crmRow.whatsapp,
+          email: crmRow.email,
+          segment: crmRow.segment,
+          stage: crmRow.stage,
+          location: crmRow.location,
         }
       : null,
-    metricas: metricas(msgs),
-    mensajes: msgs.map((m) => ({
+    metrics: computeMetrics(msgs),
+    messages: msgs.map((m) => ({
       ts: m.ts,
-      fecha_iso: isoLocal(m.ts),
-      direccion: m.direccion,
-      tipo: m.tipo,
-      texto: m.texto,
-      tiene_media: m.tiene_media,
+      iso: isoLocal(m.ts),
+      direction: m.direction,
+      type: m.type,
+      text: m.text,
+      has_media: m.has_media,
     })),
   });
 }
 
-threads.sort((a, b) => b.metricas.total - a.metricas.total || a.conv_id.localeCompare(b.conv_id));
+threads.sort((a, b) => b.metrics.total - a.metrics.total || a.thread_id.localeCompare(b.thread_id));
 
 // ------------------------------------------------------ 6) verification ---
 
-const sumaMensajes = threads.reduce((a, t) => a + t.metricas.total, 0);
-const totalEsperado = lineas;
-if (sumaMensajes + excluidosGrupo + malformadas + sinFrom !== totalEsperado) {
+const messagesInThreads = threads.reduce((a, t) => a + t.metrics.total, 0);
+const expectedTotal = linesRead;
+if (messagesInThreads + groupExcluded + malformed + noSender !== expectedTotal) {
   warn(
-    `Descuadre: ${sumaMensajes} en conversaciones + ${excluidosGrupo} de grupos ` +
-    `+ ${malformadas} malformadas + ${sinFrom} sin from != ${totalEsperado} líneas leídas`,
+    `Count mismatch: ${messagesInThreads} in threads + ${groupExcluded} group + ` +
+    `${malformed} malformed + ${noSender} without sender != ${expectedTotal} lines read`,
   );
 }
 const ids = new Set();
 const dupIds = [];
-for (const t of threads) { if (ids.has(t.conv_id)) dupIds.push(t.conv_id); ids.add(t.conv_id); }
-if (dupIds.length) warn(`conv_id duplicados: ${dupIds.slice(0, 5).join(', ')}`);
+for (const t of threads) { if (ids.has(t.thread_id)) dupIds.push(t.thread_id); ids.add(t.thread_id); }
+if (dupIds.length) warn(`duplicate thread_ids: ${dupIds.slice(0, 5).join(', ')}`);
 
 // ---------------------------------------------------------- 7) outputs ---
 
 await mkdir(OUT_DIR, { recursive: true });
-await writeFile(THREADS_FILE, JSON.stringify(threads, null, 2), 'utf8');
+await writeFile(
+  THREADS_FILE,
+  JSON.stringify({ schema_version: 1, generated_at: new Date().toISOString(), session: SESSION || null, threads }, null, 2),
+  'utf8',
+);
 
 const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-const csv = ['﻿conv_id,numero,fecha_iso,direccion,tipo,texto'];
+const csv = ['﻿thread_id,phone,iso,direction,type,text'];
 for (const t of threads) {
-  for (const m of t.mensajes) {
+  for (const m of t.messages) {
     // Text is flattened: the CSV is for skimming, the faithful text is in threads.json.
-    csv.push([t.conv_id, t.numero ?? '', m.fecha_iso, m.direccion, m.tipo, m.texto.replace(/\r?\n/g, ' | ')].map(q).join(','));
+    csv.push([t.thread_id, t.phone ?? '', m.iso, m.direction, m.type, m.text.replace(/\r?\n/g, ' | ')].map(q).join(','));
   }
 }
 await writeFile(CSV_FILE, csv.join('\n'), 'utf8');
 
-const conIdaYVuelta = threads.filter((t) => t.metricas.ida_y_vuelta).length;
-const sinResponder = threads.filter((t) => t.metricas.sin_responder).length;
-const medianas = threads.map((t) => t.metricas.mediana_respuesta_min).filter((v) => v !== null);
+const twoWay = threads.filter((t) => t.metrics.two_way).length;
+const unanswered = threads.filter((t) => t.metrics.unanswered).length;
+const medians = threads.map((t) => t.metrics.median_response_min).filter((v) => v !== null);
 
-const resumen = {
-  generado: new Date().toISOString(),
-  fuente: MESSAGES_FILE,
-  sesion_waha: SESSION || null,
-  lineas_leidas: lineas,
-  mensajes_excluidos_grupos: excluidosGrupo,
-  mensajes_malformados: malformadas,
-  mensajes_sin_from: sinFrom,
-  mensajes_incluidos: sumaMensajes,
-  chats_1a1: porJid.size,
-  jids_lid: lids.length,
-  jids_cus: cusJids.length,
-  jids_otros: otrosJids.length,
-  lids_resueltos: lidsResueltos,
-  lids_no_resueltos: lidsNoResueltos,
-  fusiones_lid_cus: fusiones,
-  conversaciones_multi_jid: threads.filter((t) => t.jids.length > 1).length,
-  conversaciones: threads.length,
-  conversaciones_con_ida_y_vuelta: conIdaYVuelta,
-  conversaciones_sin_responder: sinResponder,
-  conversaciones_con_nombre_waha: threads.filter((t) => t.nombre_waha).length,
-  crm_disponible: crmDisponible,
-  match_crm: matchCrm,
-  conversaciones_internas: internas,
-  entrantes: threads.reduce((a, t) => a + t.metricas.entrantes, 0),
-  salientes: threads.reduce((a, t) => a + t.metricas.salientes, 0),
-  mensajes_con_media: threads.reduce((a, t) => a + t.metricas.con_media, 0),
-  mediana_global_respuesta_min: medianas.length ? Math.round(median(medianas) * 10) / 10 : null,
-  verificacion_suma_ok: sumaMensajes + excluidosGrupo + malformadas + sinFrom === totalEsperado,
-  conv_id_duplicados: dupIds.length,
-  advertencias,
+const summary = {
+  schema_version: 1,
+  generated_at: new Date().toISOString(),
+  source: MESSAGES_FILE,
+  session: SESSION || null,
+  lines_read: linesRead,
+  group_messages_excluded: groupExcluded,
+  malformed_messages: malformed,
+  messages_without_sender: noSender,
+  messages_included: messagesInThreads,
+  one_to_one_chats: byJid.size,
+  lid_jids: lids.length,
+  cus_jids: cusJids.length,
+  other_jids: otherJids.length,
+  lids_resolved: lidsResolved,
+  lids_unresolved: lidsUnresolved,
+  lid_cus_merges: merges,
+  multi_jid_threads: threads.filter((t) => t.jids.length > 1).length,
+  threads: threads.length,
+  two_way_threads: twoWay,
+  unanswered_threads: unanswered,
+  threads_with_contact_name: threads.filter((t) => t.contact_name).length,
+  crm_available: !!crm,
+  crm_matches: crmMatches,
+  internal_threads: internal,
+  inbound: threads.reduce((a, t) => a + t.metrics.inbound, 0),
+  outbound: threads.reduce((a, t) => a + t.metrics.outbound, 0),
+  messages_with_media: threads.reduce((a, t) => a + t.metrics.with_media, 0),
+  global_median_response_min: medians.length ? Math.round(median(medians) * 10) / 10 : null,
+  count_check_ok: messagesInThreads + groupExcluded + malformed + noSender === expectedTotal,
+  duplicate_thread_ids: dupIds.length,
+  warnings,
 };
-await writeFile(RESUMEN_FILE, JSON.stringify(resumen, null, 2), 'utf8');
+await writeFile(SUMMARY_FILE, JSON.stringify(summary, null, 2), 'utf8');
 
-console.log(`\n✓ ${threads.length} conversations → ${THREADS_FILE}`);
-console.log(`✓ ${sumaMensajes} messages → ${CSV_FILE}`);
-console.log(`✓ summary → ${RESUMEN_FILE}`);
-console.log(`\nVerification: ${sumaMensajes} + ${excluidosGrupo} groups + ${malformadas} malformed + ${sinFrom} without from = ${sumaMensajes + excluidosGrupo + malformadas + sinFrom} (expected ${totalEsperado}) → ${resumen.verificacion_suma_ok ? 'OK' : 'MISMATCH'}`);
-console.log(`duplicate conv_ids: ${dupIds.length}`);
-console.log('\nTop 5 conversations by message count:');
+console.log(`\n✓ ${threads.length} threads → ${THREADS_FILE}`);
+console.log(`✓ ${messagesInThreads} messages → ${CSV_FILE}`);
+console.log(`✓ summary → ${SUMMARY_FILE}`);
+console.log(`\nVerification: ${messagesInThreads} + ${groupExcluded} group + ${malformed} malformed + ${noSender} without sender = ${messagesInThreads + groupExcluded + malformed + noSender} (expected ${expectedTotal}) → ${summary.count_check_ok ? 'OK' : 'MISMATCH'}`);
+console.log(`duplicate thread_ids: ${dupIds.length}`);
+console.log('\nTop 5 threads by message count:');
 for (const t of threads.slice(0, 5)) {
-  console.log(`  ${t.numero_display ?? t.conv_id}  —  ${t.metricas.total} messages`);
+  console.log(`  ${t.phone_display ?? t.thread_id}  —  ${t.metrics.total} messages`);
 }
-if (advertencias.length) {
+if (warnings.length) {
   console.log('\nWarnings:');
-  for (const a of advertencias) console.log(`  - ${a}`);
+  for (const a of warnings) console.log(`  - ${a}`);
 }

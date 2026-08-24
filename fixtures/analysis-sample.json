@@ -1,81 +1,104 @@
-[
-  {
-    "dimension": "preguntas_frecuentes",
-    "titulo": "Preguntas frecuentes reales",
-    "resumen": "Sobre el corpus sintético de demostración: las consultas dominantes son precio/cotización, disponibilidad de stock y envíos al interior. Este texto es un ejemplo del contrato de análisis, no un análisis real.",
-    "hallazgos": [
-      {
-        "titulo": "El precio es la primera pregunta",
-        "detalle": "La mayoría de las conversaciones entrantes abren pidiendo precio o cotización antes que cualquier otra cosa.",
-        "frecuencia": "aparece en la mayoría de las conversaciones con ida y vuelta",
-        "confianza": "alta"
+{
+  "schema_version": 1,
+  "dimensions": [
+    {
+      "key": "frequent_questions",
+      "title": "Preguntas frecuentes reales",
+      "summary": "Sobre el corpus sintético de demostración: las consultas dominantes son precio/cotización, disponibilidad de stock y envíos al interior. Este texto es un ejemplo del contrato de análisis, no un análisis real.",
+      "findings": [
+        {
+          "title": "El precio es la primera pregunta",
+          "detail": "La mayoría de las conversaciones entrantes abren pidiendo precio o cotización antes que cualquier otra cosa.",
+          "frequency": "aparece en la mayoría de las conversaciones con ida y vuelta",
+          "confidence": "high",
+          "evidence": [
+            { "thread_id": "5491155501234", "quote": "Hola! Precio de la cinta de 60cm?" }
+          ]
+        },
+        {
+          "title": "Los envíos al interior generan consultas repetidas",
+          "detail": "Varios clientes preguntan por envíos fuera del área metropolitana; la respuesta es siempre la misma plantilla.",
+          "frequency": "varias conversaciones distintas",
+          "confidence": "medium",
+          "evidence": [
+            { "thread_id": "5491122334455", "quote": "¿Hacen envíos al interior?" }
+          ]
+        }
+      ],
+      "columns": [
+        { "key": "n", "label": "#" },
+        { "key": "question", "label": "Pregunta" },
+        { "key": "frequency", "label": "Frecuencia observada" },
+        { "key": "example", "label": "Ejemplo textual" },
+        { "key": "confidence", "label": "Confianza" }
+      ],
+      "rows": [
+        { "n": 1, "question": "¿Cuánto sale? / cotización", "frequency": "dominante en aperturas", "example": "Hola! Precio de la cinta de 60cm?", "confidence": "alta" },
+        { "n": 2, "question": "¿Hacen envíos al interior?", "frequency": "recurrente", "example": "¿Hacen envíos al interior?", "confidence": "alta" },
+        { "n": 3, "question": "¿Tienen stock?", "frequency": "recurrente", "example": "Buenas, ¿tienen stock?", "confidence": "media" }
+      ],
+      "method": "Lectura de los mensajes entrantes del corpus sintético y agrupación manual por intención. Ejemplo de contrato: un análisis real declara acá su método exacto.",
+      "limitations": [
+        "Corpus sintético de demostración: los hallazgos ilustran el formato, no un negocio real.",
+        "Los mensajes que son solo media (fotos, audios) no tienen texto analizable."
+      ],
+      "verdict": {
+        "reviewed": 3,
+        "confirmed": 2,
+        "refuted": [
+          {
+            "title": "Los clientes preguntan por formas de pago",
+            "reason": "El verificador solo encontró una única mención a tarjeta en todo el corpus: una aparición no es un patrón.",
+            "correction": "Se elimina el hallazgo; con una sola aparición no se afirma frecuencia."
+          }
+        ]
       },
-      {
-        "titulo": "Los envíos al interior generan consultas repetidas",
-        "detalle": "Varios clientes preguntan por envíos fuera del área metropolitana; la respuesta es siempre la misma plantilla.",
-        "frecuencia": "varias conversaciones distintas",
-        "confianza": "media"
+      "row_verification_notes": {
+        "1": "Verificado: la cita existe textual en el corpus y la frecuencia se recontó.",
+        "3": "La frecuencia real es menor a la estimada por el analista; se bajó la confianza a media."
       }
-    ],
-    "columnas_xlsx": ["#", "Pregunta", "Frecuencia observada", "Ejemplo textual", "Confianza"],
-    "filas_xlsx": [
-      { "#": 1, "Pregunta": "¿Cuánto sale? / cotización", "Frecuencia observada": "dominante en aperturas", "Ejemplo textual": "Hola! Precio de la cinta de 60cm?", "Confianza": "alta" },
-      { "#": 2, "Pregunta": "¿Hacen envíos al interior?", "Frecuencia observada": "recurrente", "Ejemplo textual": "¿Hacen envíos al interior?", "Confianza": "alta" },
-      { "#": 3, "Pregunta": "¿Tienen stock?", "Frecuencia observada": "recurrente", "Ejemplo textual": "Buenas, ¿tienen stock?", "Confianza": "media" }
-    ],
-    "metodo": "Lectura de los mensajes entrantes del corpus sintético y agrupación manual por intención. Ejemplo de contrato: un análisis real declara acá su método exacto.",
-    "limitaciones": [
-      "Corpus sintético de demostración: los hallazgos ilustran el formato, no un negocio real.",
-      "Los mensajes que son solo media (fotos, audios) no tienen texto analizable."
-    ],
-    "verdicto": {
-      "revisados": 3,
-      "confirmados": 2,
-      "refutados": [
-        {
-          "titulo": "Los clientes preguntan por formas de pago",
-          "por_que": "El verificador solo encontró una única mención a tarjeta en todo el corpus: una aparición no es un patrón.",
-          "correccion": "Se elimina el hallazgo; con una sola aparición no se afirma frecuencia."
-        }
-      ]
     },
-    "notas_verificacion_filas": {
-      "1": "Verificado: la cita existe textual en el corpus y la frecuencia se recontó.",
-      "3": "La frecuencia real es menor a la estimada por el analista; se bajó la confianza a media."
+    {
+      "key": "ops_response_times",
+      "title": "Operativa y tiempos de respuesta",
+      "summary": "Ejemplo de dimensión operativa sobre el corpus sintético: hay conversaciones sin responder y la mediana de respuesta varía fuerte entre hilos.",
+      "findings": [
+        {
+          "title": "ALERTA: hay conversaciones entrantes sin ninguna respuesta",
+          "detail": "Existen hilos donde el cliente escribió varias veces y nunca hubo un mensaje saliente.",
+          "frequency": "varias conversaciones del corpus",
+          "confidence": "high",
+          "evidence": [
+            { "thread_id": "5491133445566", "quote": "¿Me leen?" }
+          ]
+        }
+      ],
+      "columns": [
+        { "key": "n", "label": "#" },
+        { "key": "aspect", "label": "Aspecto" },
+        { "key": "observation", "label": "Observación" },
+        { "key": "confidence", "label": "Confianza" }
+      ],
+      "rows": [
+        { "n": 1, "aspect": "Hilos sin responder", "observation": "El último mensaje es del cliente en una parte relevante de los hilos.", "confidence": "alta" },
+        { "n": 2, "aspect": "Variabilidad de respuesta", "observation": "Conviven respuestas en minutos con respuestas al día siguiente.", "confidence": "media" }
+      ],
+      "method": "Conteo directo sobre las métricas por conversación del corpus (campo metrics), sin LLM.",
+      "limitations": [
+        "La métrica de respuesta se ancla al primer mensaje de cada racha entrante: una respuesta al quinto mensaje de una racha larga cuenta el tiempo desde el primero."
+      ],
+      "verdict": {
+        "reviewed": 2,
+        "confirmed": 1,
+        "refuted": [
+          {
+            "title": "Se responde más rápido a la mañana",
+            "reason": "La muestra por franja horaria del corpus sintético es demasiado chica para sostener la comparación.",
+            "correction": "Sin corrección numérica: el hallazgo se retira por falta de muestra."
+          }
+        ]
+      },
+      "row_verification_notes": {}
     }
-  },
-  {
-    "dimension": "operativa_tiempos",
-    "titulo": "Operativa y tiempos de respuesta",
-    "resumen": "Ejemplo de dimensión operativa sobre el corpus sintético: hay conversaciones sin responder y la mediana de respuesta varía fuerte entre hilos.",
-    "hallazgos": [
-      {
-        "titulo": "ALERTA: hay conversaciones entrantes sin ninguna respuesta",
-        "detalle": "Existen hilos donde el cliente escribió varias veces y nunca hubo un mensaje saliente.",
-        "frecuencia": "varias conversaciones del corpus",
-        "confianza": "alta"
-      }
-    ],
-    "columnas_xlsx": ["#", "Aspecto", "Observación", "Confianza"],
-    "filas_xlsx": [
-      { "#": 1, "Aspecto": "Hilos sin responder", "Observación": "El último mensaje es del cliente en una parte relevante de los hilos.", "Confianza": "alta" },
-      { "#": 2, "Aspecto": "Variabilidad de respuesta", "Observación": "Conviven respuestas en minutos con respuestas al día siguiente.", "Confianza": "media" }
-    ],
-    "metodo": "Conteo directo sobre las métricas por conversación del corpus (campo metricas), sin LLM.",
-    "limitaciones": [
-      "La métrica de respuesta se ancla al primer mensaje de cada racha entrante: una respuesta al quinto mensaje de una racha larga cuenta el tiempo desde el primero."
-    ],
-    "verdicto": {
-      "revisados": 2,
-      "confirmados": 1,
-      "refutados": [
-        {
-          "titulo": "Se responde más rápido a la mañana",
-          "por_que": "La muestra por franja horaria del corpus sintético es demasiado chica para sostener la comparación.",
-          "correccion": "Sin corrección numérica: el hallazgo se retira por falta de muestra."
-        }
-      ]
-    },
-    "notas_verificacion_filas": {}
-  }
-]
+  ]
+}
