@@ -54,6 +54,10 @@ const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
 const ts = (y, mo, d, h = 12, mi = 0) => Math.floor(Date.UTC(y, mo - 1, d, h, mi) / 1000);
 
 let msgSeq = 0;
+// Message shape deliberately models the NOWEB/GOWS engines — the only ones
+// the pipeline supports: `from` carries the CHAT JID in both directions and
+// `fromMe` carries the direction. (WEBJS-style DTOs put the own JID in `from`
+// for outgoing messages; threads.mjs has a tripwire for that shape.)
 function msg(from, fromMe, t, body, extra = {}) {
   const { pushName, message, hasMedia, location, vCards, noFrom } = extra;
   const m = {

@@ -55,6 +55,17 @@ Note: a negative resolution is cached permanently. If WAHA was down during the
 run, delete `lid-cache.json` and re-run (a TTL/`--refresh-lids` flag is on the
 roadmap).
 
+## Message shape: `from` is the chat JID in both directions (NOWEB/GOWS)
+
+On the supported engines, `chats/all/messages` delivers the **chat JID in
+`from` for both inbound and outbound messages** (`fromMe` carries the
+direction) — the corpus phase groups threads on exactly that, and it is
+empirically proven by the multi-thousand-message corpus this pipeline was
+built on. WEBJS-style DTOs instead put your **own** JID in `from` for
+outgoing messages, which would collapse all outbound traffic into one
+self-thread. `src/threads.mjs` detects that signature and warns loudly; if
+you ever see that warning, your dump did not come from a NOWEB/GOWS session.
+
 ## downloadMedia=false
 
 The dump deliberately skips media downloads. Consequences: `media` comes back

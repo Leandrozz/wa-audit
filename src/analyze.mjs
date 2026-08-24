@@ -49,6 +49,10 @@ if (corpusFile?.schema_version !== 1) {
 }
 const threads = corpusFile.threads;
 const summary = JSON.parse(readFileSync(path.join(OUT_DIR, 'summary.json'), 'utf8'));
+if (summary?.schema_version !== 1) {
+  console.error('summary.json is not schema_version 1 — run src/threads.mjs first.');
+  process.exit(1);
+}
 const threadsById = new Map(threads.map((t) => [t.thread_id, t]));
 
 // ------------------------------------------------------------- prompt files ---
@@ -189,6 +193,10 @@ async function completeJson({ system, user, tag }) {
 // ------------------------------------------------------- code-layer verifier ---
 
 const normWs = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+// Quotes are copied from the digest, where newlines render as ' ⏎ ' and long
+// messages end in '…[truncated]' — strip both so a faithful multi-line quote
+// still matches the stored message text.
+const normQuote = (s) => normWs(String(s ?? '').replace(/⏎/g, ' ').replace(/…\[truncated\]/g, ' '));
 
 /** Layer A: quotes must exist verbatim in the cited thread. Deterministic. */
 function codeVerify(findings) {
@@ -203,7 +211,7 @@ function codeVerify(findings) {
     const bad = evidence.find((ev) => {
       const t = threadsById.get(String(ev.thread_id));
       if (!t) return true;
-      const q = normWs(ev.quote);
+      const q = normQuote(ev.quote);
       if (!q) return true;
       return !t.messages.some((m) => normWs(m.text).includes(q));
     });
@@ -252,8 +260,22 @@ for (const key of dims) {
     tag: `verify-${key}`,
   });
 
-  const llmRefuted = (Array.isArray(ver.refuted) ? ver.refuted : [])
-    .filter((r) => r.title && !codeRefuted.some((c) => c.title === r.title));
+  // Layer-B refutations must target a real surviving finding: a title the LLM
+  // paraphrased matches nothing, would inflate the refuted count AND let the
+  // targeted finding survive. Match strictly, dedupe, and warn on strays.
+  const codeOkTitles = new Set(codeOk.map((f) => f.title));
+  const llmRefuted = [];
+  const seenTitles = new Set();
+  for (const r of (Array.isArray(ver.refuted) ? ver.refuted : [])) {
+    if (!r.title || seenTitles.has(r.title)) continue;
+    seenTitles.add(r.title);
+    if (codeRefuted.some((c) => c.title === r.title)) continue; // already refuted by layer A
+    if (!codeOkTitles.has(r.title)) {
+      console.warn(`  ! verifier refuted a title that matches no finding (ignored): "${String(r.title).slice(0, 80)}"`);
+      continue;
+    }
+    llmRefuted.push(r);
+  }
   const allRefuted = [...codeRefuted, ...llmRefuted];
   const refutedTitles = new Set(allRefuted.map((r) => r.title));
   const surviving = codeOk.filter((f) => !refutedTitles.has(f.title));
@@ -290,6 +312,10 @@ for (const d of dimensions) {
       console.error(`Internal error: dimension "${d.key}" missing "${field}"`);
       process.exit(1);
     }
+  }
+  if (d.verdict.reviewed !== d.verdict.confirmed + d.verdict.refuted.length) {
+    console.error(`Internal error: dimension "${d.key}" verdict arithmetic does not close (${d.verdict.reviewed} != ${d.verdict.confirmed} + ${d.verdict.refuted.length})`);
+    process.exit(1);
   }
 }
 

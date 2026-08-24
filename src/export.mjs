@@ -20,6 +20,7 @@
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { loadConfig } from './lib/config.mjs';
 
 const BASE = (process.env.WAHA_BASE_URL ?? '').replace(/\/+$/, '');
 const API_KEY = process.env.WAHA_API_KEY ?? '';
@@ -27,7 +28,7 @@ const AUTH_HEADERS = { 'X-Api-Key': API_KEY };
 if (process.env.WAHA_BASIC_AUTH) {
   AUTH_HEADERS.Authorization = `Basic ${Buffer.from(process.env.WAHA_BASIC_AUTH, 'utf8').toString('base64')}`;
 }
-const OUT_DIR = process.env.WA_OUT_DIR ?? 'data/wa-history';
+const OUT_DIR = loadConfig().output.dir; // honors wa-audit.config.json; WA_OUT_DIR env wins
 const SESSION = process.argv[2];
 
 const PAGE = 500;

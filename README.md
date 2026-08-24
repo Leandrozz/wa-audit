@@ -8,7 +8,10 @@ multi-sheet XLSX report: response times, real FAQs, customer archetypes,
 objections, what a bot could actually resolve — with a methodology sheet that
 records what the verification *refuted*.
 
-Everything runs on your machine. Nothing is uploaded anywhere.
+Everything runs on your machine. The only outbound traffic in the whole
+pipeline is the phase-4 analysis call to the LLM provider **you** configure —
+and even that goes away with `llm.provider: "mock"` or a self-hosted
+OpenAI-compatible endpoint, for a fully offline run.
 
 *Leé esto en castellano: [README.es.md](README.es.md).*
 
@@ -39,8 +42,10 @@ Everything runs on your machine. Nothing is uploaded anywhere.
 > **Personal data:** chat history is personal data of third parties. You are
 > solely responsible for having a valid legal basis to process it and for
 > complying with the law that applies to you (GDPR, LGPD, Ley 25.326, …).
-> Processing happens entirely on your own infrastructure; this project
-> transmits nothing to its authors or anyone else.
+> Processing happens on your own infrastructure and this project transmits
+> nothing to its authors. The one outbound flow is the analysis phase, which
+> sends a corpus digest to the LLM provider you configure — none at all with a
+> local or mock provider. Choose your provider accordingly.
 >
 > This software is provided "AS IS", without warranty of any kind.
 
@@ -137,9 +142,9 @@ overrides (env wins). The essentials:
 | `phone.defaultCountry` | `"AR"` | Country for CRM numbers without prefix |
 | `timezone.utcOffset` | `"-03:00"` | Fixed offset for local timestamps |
 | `locale` | `"es-AR"` | Number formatting in the report |
-| `crm.file` | `null` | Optional CRM CSV (`phone,name,contact,email,segment,stage,location`) |
+| `crm.file` | `null` | Optional CRM CSV (`phone,whatsapp,name,contact,email,segment,stage,location`) |
 | `llm.provider` | `"anthropic"` | `anthropic` \| `openai` (any compatible endpoint) \| `mock` |
-| `llm.model` | `claude-opus-5` | Model for the analysis engine |
+| `llm.model` | `null` | `anthropic` falls back to `claude-opus-5`; `openai` requires an explicit model |
 
 Secrets are env-only: `WAHA_BASE_URL`, `WAHA_API_KEY` (+ `ANTHROPIC_API_KEY`
 or `LLM_API_KEY` for phase 4). `WAHA_BASE_URL` has **no default on purpose**

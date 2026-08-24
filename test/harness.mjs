@@ -14,16 +14,22 @@ const DUMP = path.join(ROOT, 'fixtures', 'waha-dump');
 
 export const tmpDir = () => mkdtempSync(path.join(os.tmpdir(), 'wa-audit-'));
 
-/** Env for pipeline runs: fixture knobs on, inherited WAHA_* off. */
+/** Hermetic env for pipeline runs: every ambient WA_ and WAHA_ override is
+ *  scrubbed and the knobs the goldens depend on are pinned explicitly, so a
+ *  user's shell env or an edited repo-root wa-audit.config.json can't bend
+ *  the test lanes (env beats the config file in loadConfig). */
 export function pipelineEnv(outDir, extra = {}) {
-  const env = { ...process.env, ...extra };
-  delete env.WAHA_BASE_URL;
-  delete env.WAHA_API_KEY;
-  delete env.WAHA_BASIC_AUTH;
-  delete env.WAHA_SESSION;
+  const env = { ...process.env };
+  for (const k of Object.keys(env)) {
+    if (k.startsWith('WA_') || k.startsWith('WAHA_')) delete env[k];
+  }
   return {
     ...env,
     WA_OUT_DIR: outDir,
+    WA_TZ_OFFSET: '-03:00',
+    WA_LOCALE: 'es-AR',
+    WA_DEFAULT_COUNTRY: 'AR',
+    WA_REPORT_FILENAME: 'whatsapp-report.xlsx',
     WA_INTERNAL_EMAIL_DOMAINS: 'fixture-internal.test',
     WA_CRM_FILE: path.join(DUMP, 'crm.csv'),
     WA_BUSINESS_NAME: 'Demo Industrial SRL',

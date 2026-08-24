@@ -8,7 +8,10 @@ un informe XLSX de múltiples hojas: tiempos de respuesta, preguntas frecuentes
 reales, arquetipos de cliente, objeciones, qué podría resolver un bot — con
 una hoja de metodología que registra lo que la verificación *refutó*.
 
-Todo corre en tu máquina. No se sube nada a ningún lado.
+Todo corre en tu máquina. El único tráfico saliente de todo el pipeline es la
+llamada de la fase 4 de análisis al proveedor de LLM que **vos** configurás —
+y hasta eso desaparece con `llm.provider: "mock"` o un endpoint compatible con
+OpenAI self-hosteado, para una corrida 100% offline.
 
 *English version: [README.md](README.md).*
 
@@ -39,8 +42,11 @@ Todo corre en tu máquina. No se sube nada a ningún lado.
 > **Datos personales:** el historial de chats son datos personales de
 > terceros. Sos el único responsable de tener una base legal válida para
 > tratarlos y de cumplir la normativa que te aplique (GDPR, LGPD, Ley
-> 25.326, …). El procesamiento ocurre íntegramente en tu propia
-> infraestructura; este proyecto no transmite nada a sus autores ni a nadie.
+> 25.326, …). El procesamiento ocurre en tu propia infraestructura y este
+> proyecto no transmite nada a sus autores. El único flujo saliente es el de
+> la fase de análisis, que envía un extracto del corpus al proveedor de LLM
+> que configures — ninguno, con un proveedor local o mock. Elegí el proveedor
+> con eso en mente.
 >
 > Este software se provee "TAL CUAL", sin garantías de ningún tipo.
 

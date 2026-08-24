@@ -95,17 +95,23 @@ if (corpusFile?.schema_version !== 1 || !Array.isArray(corpusFile.threads)) {
 }
 const threads = corpusFile.threads;
 const summary = leerJson('summary.json');
+if (summary?.schema_version !== 1) {
+  console.error('summary.json is not schema_version 1 — regenerate the corpus with src/threads.mjs.');
+  process.exit(1);
+}
 
 let dimensiones = [];
 try {
   const analysis = leerJson('analysis.json');
   if (analysis?.schema_version === 1 && Array.isArray(analysis.dimensions)) {
     dimensiones = analysis.dimensions;
-  } else if (analysis) {
-    console.warn('  ! analysis.json is not schema_version 1 — ignoring it (validate with npm run check:analysis)');
+  } else {
+    // Present but wrong version: reject loudly, never silently degrade.
+    console.error('analysis.json exists but is not schema_version 1 — validate with npm run check:analysis.');
+    process.exit(1);
   }
 } catch {
-  dimensiones = [];
+  dimensiones = []; // absent analysis is fine: the report ships without dimension sheets
 }
 for (const d of dimensiones) {
   if (!d.verdict) console.warn(`  ! dimension "${d.key ?? d.title}" has no verdict — unverified analysis should not ship`);
@@ -148,7 +154,12 @@ let ventanaDesdeIdx = 0;
   }
 }
 const mesInicioVentana = mesesOrdenados[ventanaDesdeIdx] ?? null;
-const mesesVentana = mesesOrdenados.length - ventanaDesdeIdx;
+// Calendar spans, not months-with-traffic: a dormant month inside the range
+// still counts toward any honest "per month" divisor.
+const monthIndex = (m) => Number(m.slice(0, 4)) * 12 + Number(m.slice(5, 7));
+const ultimoMes = mesesOrdenados[mesesOrdenados.length - 1] ?? null;
+const mesesCalendario = ultimoMes ? monthIndex(ultimoMes) - monthIndex(mesesOrdenados[0]) + 1 : 0;
+const mesesVentana = ultimoMes && mesInicioVentana ? monthIndex(ultimoMes) - monthIndex(mesInicioVentana) + 1 : 0;
 const mensajesResiduales = mesesOrdenados
   .slice(0, ventanaDesdeIdx)
   .reduce((a, m) => a + porMes[m], 0);
@@ -234,10 +245,10 @@ push([]);
 if (hayResidual) {
   push(['LEER PRIMERO — el rango de fechas engaña'], 1);
   push([
-    `El historial va del ${soloFecha(primerIso)} al ${soloFecha(ultimoIso)} (${mesesOrdenados.length} meses calendario), pero NO es actividad pareja. ` +
+    `El historial va del ${soloFecha(primerIso)} al ${soloFecha(ultimoIso)} (${mesesCalendario} meses calendario), pero NO es actividad pareja. ` +
       `Antes de ${mesInicioVentana} hay apenas ${num(mensajesResiduales)} mensajes en todo el dump (actividad residual, no conversaciones sostenidas). ` +
       `El ${pct(totalMensajes - mensajesResiduales, totalMensajes)} del volumen está concentrado en los ${mesesVentana} meses desde ${mesInicioVentana}. ` +
-      `Cualquier promedio "por mes" calculado sobre el rango completo es falso: hay que dividir por ${mesesVentana}, no por ${mesesOrdenados.length}.`,
+      `Cualquier promedio "por mes" calculado sobre el rango completo es falso: hay que dividir por ${mesesVentana}, no por ${mesesCalendario}.`,
   ]);
   push([]);
 }
@@ -255,7 +266,7 @@ filaResumen('Clientes distintos (números)', num(convsReales.length), 'Una conve
 filaResumen('Conversaciones con ida y vuelta', `${num(idaYVuelta)} (${pct(idaYVuelta, convs.length)})`, 'El resto es monólogo: o escribió sólo el cliente o sólo el negocio');
 filaResumen('Conversaciones que quedaron sin responder', `${num(sinResponder)} (${pct(sinResponder, convs.length)})`, 'El último mensaje es del cliente');
 filaResumen('Mensajes con archivo adjunto', `${num(conMedia)} (${pct(conMedia, totalMensajes)})`, 'Fotos, documentos, audios, stickers');
-filaResumen('Mediana de tiempo de respuesta', `${num1(summary.global_median_response_min ?? 0)} min`, 'Mediana global reportada por el corpus; mediana de las medianas por conversación: ' + (medianaGlobal != null ? num1(medianaGlobal) + ' min' : '—'));
+filaResumen('Mediana de tiempo de respuesta', summary.global_median_response_min != null ? `${num1(summary.global_median_response_min)} min` : '—', 'Mediana global reportada por el corpus; mediana de las medianas por conversación: ' + (medianaGlobal != null ? num1(medianaGlobal) + ' min' : '—'));
 filaResumen('Primer mensaje del historial', fechaHora(primerIso), '');
 filaResumen('Último mensaje del historial', fechaHora(ultimoIso), '');
 push([]);
@@ -458,7 +469,8 @@ pm([
   `El origen es un dump completo del historial de WhatsApp del negocio exportado desde WAHA, sesión ${summary.session}, ` +
     `generado el ${String(summary.generated_at).slice(0, 10)}. Son ${num(summary.lines_read)} mensajes crudos en formato JSON, uno por línea. ` +
     `De ahí se derivó el corpus de trabajo (threads.json + messages.csv), que es lo que alimenta este Excel. ` +
-    `Nada de esto se subió a ningún servicio externo: el dump y el corpus quedan en el directorio de salida local, en la máquina que corrió el proceso.`,
+    `El dump y el corpus quedan en el directorio de salida local, en la máquina que corrió el proceso; este generador no sube nada a ningún servicio externo. ` +
+    `La única transmisión externa posible del pipeline es la de la fase de análisis, que envía un extracto del corpus al proveedor de LLM configurado (ninguna, si se usó un motor local).`,
 ]);
 pm([]);
 

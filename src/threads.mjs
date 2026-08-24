@@ -419,6 +419,26 @@ for (const c of convs.values()) {
 
 threads.sort((a, b) => b.metrics.total - a.metrics.total || a.thread_id.localeCompare(b.thread_id));
 
+// Engine-shape tripwire. On NOWEB/GOWS (the only supported engines) `from` is
+// the chat JID in BOTH directions — empirically proven by the real corpus this
+// pipeline was built on. WEBJS-style DTOs instead put the OWN jid in `from`
+// for outgoing messages, which would silently collapse all outbound traffic
+// into one self-thread and zero out every response metric. Detect that
+// signature and scream instead of shipping wrong numbers.
+{
+  const totalOutbound = threads.reduce((a, t) => a + t.metrics.outbound, 0);
+  if (threads.length >= 5 && totalOutbound > 0) {
+    const hoarder = threads.find((t) => t.metrics.inbound === 0 && t.metrics.outbound / totalOutbound > 0.8);
+    if (hoarder) {
+      warn(
+        `thread ${hoarder.thread_id} holds ${hoarder.metrics.outbound} of ${totalOutbound} outbound messages and zero inbound — ` +
+        `this is the signature of a WEBJS-style dump (own JID in "from" for outgoing messages). ` +
+        `Only NOWEB/GOWS dumps are supported; every metric in this corpus would be wrong. Re-check the engine with src/probe.mjs.`,
+      );
+    }
+  }
+}
+
 // ------------------------------------------------------ 6) verification ---
 
 const messagesInThreads = threads.reduce((a, t) => a + t.metrics.total, 0);
