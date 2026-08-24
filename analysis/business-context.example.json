@@ -1,0 +1,13 @@
+{
+  "_comment": "Copy to <output.dir>/business-context.json. Free-form: these fields mirror the operator interview in analysis/PLAYBOOK.md; add or drop whatever fits. Everything here is handed to the analysis generator AND the verifier.",
+  "business_name": "Demo Industrial SRL",
+  "industry": "venta de insumos industriales",
+  "what_we_sell": "cintas transportadoras, repuestos, bombas de agua",
+  "who_buys": "ferreterías, distribuidores, PyMEs industriales; mezcla minorista/mayorista",
+  "sales_process": "consulta por WhatsApp → cotización → seña 50% → entrega en 15 días hábiles",
+  "team_on_this_number": "2 vendedores + a veces el dueño; sin bot actualmente",
+  "goals": "responder más rápido, perder menos cotizaciones enviadas, detectar qué automatizar",
+  "known_problems": "se pierden hilos sin responder los fines de semana; el CRM está desactualizado",
+  "tone_intent": "cercano pero profesional, voseo",
+  "constraints": "no podemos bajar precios; el stock varía semana a semana"
+}

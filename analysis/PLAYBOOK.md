@@ -10,6 +10,15 @@ This playbook is for running the analysis with an interactive agent (Claude
 Code, Cursor, or any LLM you drive by hand) instead of the built-in engine.
 It is also how the original analysis was produced.
 
+Two dimension sets ship in [`prompts/`](prompts/): the seven commercial
+dimensions (FAQs, response times, archetypes, objections...) and the five
+**FATE behavioral dimensions** (`fate_*`) — attention, authority, belonging,
+emotion and customer-state signals, inspired by the FATE model in Chase
+Hughes' *The Behavior Ops Manual* (original articulation, not affiliated).
+The FATE set is more interpretive, which makes the verifier pass MORE
+important there, not less — and `fate_customer_signals` carries hard rules
+(states, never verdicts about individuals) that outrank everything else.
+
 ## Why the verifier is not optional
 
 In the original run of this methodology (11,782 real messages, 7 dimensions),
@@ -30,6 +39,13 @@ From your output directory (default `data/wa-history/`):
 
 ## Procedure
 
+0. **Interview the operator first.** Before any analysis, ask the business
+   owner what they sell, to whom, how the sales process works, who answers
+   this number, what they already suspect is broken, and what tone they intend
+   — then save the answers as `business-context.json` in the output directory
+   (template: [`business-context.example.json`](business-context.example.json)).
+   Both the built-in engine and this playbook's agents must receive it:
+   findings grounded in how the business actually operates beat generic ones.
 1. **One agent per dimension.** Give each agent:
    - the dimension prompt from [`prompts/`](prompts/) (one file per dimension;
      the first line is the sheet title),

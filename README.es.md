@@ -76,6 +76,24 @@ en este proyecto:
 - la hoja de metodología del informe **imprime los hallazgos refutados**, para
   que nadie vuelva a citar los números malos.
 
+## Dos lentes de análisis: comercial + FATE conductual
+
+El análisis trae dos sets de dimensiones, ambos con la misma verificación
+obligatoria:
+
+- **Comercial** (7 dimensiones): preguntas frecuentes reales, tiempos de
+  respuesta y operativa, arquetipos de cliente, productos y temas, objeciones
+  y fricción, oportunidades de bot, tono y estilo.
+- **FATE conductual** (5 dimensiones, `npm run analyze -- --dimensions fate`):
+  cómo el negocio captura atención (*Foco*), proyecta certeza y cumple su
+  palabra (*Autoridad*), hace sentir entendido al cliente (*Tribu*), llega a
+  la capa emocional en vez de tirar specs (*Emoción*), y lee señales de estado
+  del cliente — solo clusters, explicaciones benignas primero, **estados,
+  nunca veredictos sobre personas**. Inspirado en el modelo FATE de *The
+  Behavior Ops Manual* de Chase Hughes (articulación propia; sin afiliación ni
+  endorsement del autor). Entrevistá primero al operador y cargá
+  `business-context.json` — ver [analysis/PLAYBOOK.md](analysis/PLAYBOOK.md).
+
 ## Probalo en dos minutos (sin WhatsApp)
 
 ```bash

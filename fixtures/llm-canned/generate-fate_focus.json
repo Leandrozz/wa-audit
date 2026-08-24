@@ -1,0 +1,37 @@
+{
+  "summary": "Sobre el corpus sintético: la mayoría de las aperturas del negocio son directas y personalizadas, pero existen respuestas sin gancho que matan hilos, y la cotización en plantilla se envía idéntica en varios hilos.",
+  "findings": [
+    {
+      "title": "La cotización en plantilla se repite idéntica entre hilos",
+      "detail": "El mismo bloque de cotización se pega sin personalizar en varios hilos distintos; el cliente recibe un formato de baja atención.",
+      "frequency": "varias conversaciones del corpus",
+      "confidence": "medium",
+      "evidence": [
+        { "thread_id": "5491155501234", "quote": "COTIZACIÓN N.º 101 ⏎ Producto: cinta transportadora modelo CT-101" }
+      ]
+    },
+    {
+      "title": "Hay hilos que mueren tras una respuesta sin gancho",
+      "detail": "Existen respuestas del negocio que cierran la conversación sin pregunta ni próximo paso, y el hilo se apaga ahí.",
+      "frequency": "casos puntuales identificables",
+      "confidence": "medium",
+      "evidence": [
+        { "thread_id": "5491166778899", "quote": "¿Pudiste ver la promo? Sigue vigente." }
+      ]
+    }
+  ],
+  "columns": [
+    { "key": "n", "label": "#" },
+    { "key": "pattern", "label": "Patrón de atención" },
+    { "key": "evidence", "label": "Evidencia" },
+    { "key": "recommendation", "label": "Recomendación" }
+  ],
+  "rows": [
+    { "n": 1, "pattern": "Plantilla de cotización idéntica", "evidence": "Bloque COTIZACIÓN repetido en varios hilos", "recommendation": "Personalizar la primera línea con el pedido del cliente" },
+    { "n": 2, "pattern": "Respuesta sin gancho", "evidence": "Follow-up sin pregunta ni próximo paso", "recommendation": "Cerrar cada mensaje con un próximo paso concreto" }
+  ],
+  "method": "Comparación de aperturas y cierres de mensajes salientes entre hilos del digest, con conteo de repeticiones de plantilla.",
+  "limitations": [
+    "Corpus sintético de demostración: ilustra el formato del contrato, no un negocio real."
+  ]
+}

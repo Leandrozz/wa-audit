@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, copyFileSync } from 'node:fs';
 import path from 'node:path';
 import { ROOT, run, runDirectLane, pipelineEnv } from './harness.mjs';
 
@@ -54,4 +54,30 @@ test('analysis engine: mock provider + two-layer verifier + schema-valid output'
   assert.equal(report.status, 0, `report failed:\n${report.stdout}\n${report.stderr}`);
   const info = JSON.parse(report.stdout);
   assert.ok(info.dimensions_included.includes('Preguntas frecuentes reales'));
+});
+
+test('FATE dimension: business context injected, multi-line digest quote survives layer A', () => {
+  const lane = runDirectLane();
+  copyFileSync(
+    path.join(ROOT, 'analysis', 'business-context.example.json'),
+    path.join(lane.out, 'business-context.json'),
+  );
+  const env = pipelineEnv(lane.out, { WA_LLM_PROVIDER: 'mock', WA_LLM_CANNED_DIR: CANNED });
+
+  const analyze = run('src/analyze.mjs', { args: ['--dimensions', 'fate_focus'], env });
+  assert.equal(analyze.status, 0, `analyze failed:\n${analyze.stdout}\n${analyze.stderr}`);
+  assert.match(analyze.stdout, /Business context loaded/);
+
+  const analysis = JSON.parse(readFileSync(path.join(lane.out, 'analysis.json'), 'utf8'));
+  const fate = analysis.dimensions.find((d) => d.key === 'fate_focus');
+  assert.equal(fate.title, 'FATE · Foco — captura y retención de atención');
+
+  // The quotation-template quote crosses a line break: the digest renders it
+  // with the return marker, and layer A must still verify it against the
+  // corpus (regression test for the quote-normalization fix).
+  const template = fate.findings.find((f) => f.title.includes('plantilla'));
+  assert.ok(template, 'multi-line-quote finding survived the code verifier');
+  assert.equal(fate.verdict.refuted.length, 0);
+  assert.equal(fate.verdict.reviewed, 2);
+  assert.equal(fate.verdict.confirmed, 2);
 });

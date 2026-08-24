@@ -60,10 +60,12 @@ const threadsById = new Map(threads.map((t) => [t.thread_id, t]));
 const available = readdirSync(PROMPTS_DIR)
   .filter((f) => f.endsWith('.md') && f !== 'verifier.md')
   .map((f) => f.replace(/\.md$/, ''));
-const dims = argDims ? argDims.split(',').map((s) => s.trim()).filter(Boolean) : available;
+// "fate" expands to the whole FATE behavioral dimension set.
+const dims = (argDims ? argDims.split(',').map((s) => s.trim()).filter(Boolean) : available)
+  .flatMap((d) => (d === 'fate' ? available.filter((a) => a.startsWith('fate_')) : [d]));
 for (const d of dims) {
   if (!available.includes(d)) {
-    console.error(`Unknown dimension "${d}". Available: ${available.join(', ')}`);
+    console.error(`Unknown dimension "${d}". Available: ${available.join(', ')} (or "fate" for the FATE set)`);
     process.exit(1);
   }
 }
@@ -127,6 +129,19 @@ function buildDigest(maxChars) {
 }
 
 const digest = buildDigest(cfg.analysis.maxCorpusChars);
+
+// Optional business context from the operator interview (see
+// analysis/business-context.example.json and the PLAYBOOK). Free-form JSON:
+// whatever the interview captured is handed to both the generator and the
+// verifier so findings are grounded in how THIS business actually operates.
+let businessContext = null;
+try {
+  businessContext = JSON.parse(readFileSync(path.join(OUT_DIR, 'business-context.json'), 'utf8'));
+  console.log('Business context loaded from business-context.json');
+} catch { /* optional */ }
+const contextBlock = businessContext
+  ? `\n\n## Business context (from the operator interview — ground findings in it)\n${JSON.stringify(businessContext, null, 1)}`
+  : '';
 
 // -------------------------------------------------------------- LLM contract ---
 
@@ -240,7 +255,7 @@ for (const key of dims) {
 
   const gen = await completeJson({
     system: GENERATOR_SYSTEM,
-    user: `## Dimension: ${title}\n\n${body}\n\n## Deterministic stats block\n${statsBlock}\n\n## Corpus digest\n${digest}`,
+    user: `## Dimension: ${title}\n\n${body}${contextBlock}\n\n## Deterministic stats block\n${statsBlock}\n\n## Corpus digest\n${digest}`,
     tag: `generate-${key}`,
   });
 
@@ -254,7 +269,7 @@ for (const key of dims) {
   const ver = await completeJson({
     system: VERIFIER_SYSTEM,
     user:
-      `${verifierPrompt.body}\n\n## Findings to verify (dimension: ${title})\n${JSON.stringify({ findings: codeOk, rows: gen.rows ?? [] }, null, 1)}\n\n` +
+      `${verifierPrompt.body}${contextBlock}\n\n## Findings to verify (dimension: ${title})\n${JSON.stringify({ findings: codeOk, rows: gen.rows ?? [] }, null, 1)}\n\n` +
       `## Automated evidence check already refuted these (treat as refuted)\n${JSON.stringify(codeRefuted, null, 1)}\n\n` +
       `## Deterministic stats block\n${statsBlock}\n\n## Corpus digest\n${digest}`,
     tag: `verify-${key}`,

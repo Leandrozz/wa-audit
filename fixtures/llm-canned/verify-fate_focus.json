@@ -1,0 +1,7 @@
+{
+  "refuted": [],
+  "row_verification_notes": {
+    "1": "Verificado: el bloque de cotización aparece textual en más de un hilo del corpus.",
+    "2": "Verificado: el hilo citado termina en un mensaje saliente sin respuesta posterior."
+  }
+}

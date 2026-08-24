@@ -75,6 +75,24 @@ That's why in this project:
 - the report's methodology sheet **prints the refuted findings**, so nobody
   re-cites the bad numbers later.
 
+## Two analysis lenses: commercial + FATE behavioral
+
+The analysis ships with two dimension sets, both subject to the same
+mandatory verification:
+
+- **Commercial** (7 dimensions): real FAQs, response times and operations,
+  customer archetypes, products and topics, objections and friction, bot
+  opportunities, tone and style.
+- **FATE behavioral** (5 dimensions, `npm run analyze -- --dimensions fate`):
+  how the business captures attention (*Focus*), projects certainty and keeps
+  its word (*Authority*), makes clients feel understood (*Tribe*), reaches the
+  emotional layer instead of dumping specs (*Emotion*), and reads customer
+  state signals — clusters only, benign explanations first, **states, never
+  verdicts about individuals**. Inspired by the FATE model in Chase Hughes'
+  *The Behavior Ops Manual* (original articulation; not affiliated with or
+  endorsed by the author). Interview your operator first and feed
+  `business-context.json` — see [analysis/PLAYBOOK.md](analysis/PLAYBOOK.md).
+
 ## Try it in two minutes (no WhatsApp needed)
 
 ```bash
@@ -85,8 +103,9 @@ npm run demo
 
 The demo generates a synthetic corpus, starts a mock WAHA server, runs the
 entire pipeline against it (probe → export → corpus → verified analysis →
-report) with a mock LLM, and leaves `out/demo/whatsapp-report.xlsx` for you
-to open. No keys, no network, no real data.
+report) with a mock LLM, and leaves the report in `out/demo/` in all three
+formats — **XLSX** (the client spreadsheet), **HTML** (shareable single file)
+and **DOCX** (Word). No keys, no network, no real data.
 
 ## Run it against your real WhatsApp
 
@@ -105,8 +124,8 @@ node --env-file=waha.env src/threads.mjs --session <session-name>
 # 4. LLM analysis with mandatory verification (needs ANTHROPIC_API_KEY,
 #    or any OpenAI-compatible endpoint — see Configuration)
 node --env-file=waha.env src/analyze.mjs
-# 5. the XLSX report
-node src/report-xlsx.mjs
+# 5. the report, in any or all formats
+node src/report-xlsx.mjs && node src/report-html.mjs && node src/report-docx.mjs
 ```
 
 Prefer to run the analysis with your own agent (Claude Code, Cursor, anything)
