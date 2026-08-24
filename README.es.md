@@ -126,6 +126,18 @@ node src/report-xlsx.mjs
 sea) en vez del motor incluido? Es un camino de primera clase:
 [analysis/PLAYBOOK.md](analysis/PLAYBOOK.md).
 
+## O dejá que Claude maneje todo (MCP)
+
+`npm run mcp` levanta un server MCP que convierte a Claude Desktop / Claude
+Code / ChatGPT / Cursor en el motor de la auditoría: el agente te entrevista,
+te guía el setup de WAHA, te muestra el **QR de vinculación en el chat**,
+exporta el historial y corre el análisis él mismo. El server lo mantiene
+honesto por estructura: `submit_dimension` rechaza cualquier dimensión sin
+veredicto de verificación, cada cita de evidencia se re-chequea del lado del
+server contra el corpus, y el contenido de los chats se sirve como dato no
+confiable. Nunca envía mensajes de WhatsApp. Setup:
+[docs/mcp-setup.md](docs/mcp-setup.md).
+
 ## Configuración, contrato de datos y límites
 
 - Configuración: [`wa-audit.config.json`](wa-audit.config.json) + overrides

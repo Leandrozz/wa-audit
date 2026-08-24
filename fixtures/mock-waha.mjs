@@ -51,13 +51,35 @@ const json = (res, body, status = 200) => {
   res.end(JSON.stringify(body));
 };
 
+// 1x1 transparent PNG — stands in for the pairing QR image.
+const QR_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+  'base64',
+);
+
 const server = createServer((req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const p = url.pathname;
   const limit = Number(url.searchParams.get('limit') ?? 100);
   const offset = Number(url.searchParams.get('offset') ?? 0);
 
+  if (p === '/api/sessions' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (d) => { body += d; });
+    req.on('end', () => {
+      let name = 'unnamed';
+      try { name = JSON.parse(body).name ?? name; } catch { /* keep default */ }
+      json(res, { name, status: 'SCAN_QR_CODE' }, 201);
+    });
+    return;
+  }
   if (p === '/api/sessions') return json(res, sessions);
+
+  let qr = p.match(/^\/api\/([^/]+)\/auth\/qr$/);
+  if (qr) {
+    res.writeHead(200, { 'Content-Type': 'image/png' });
+    return res.end(QR_PNG);
+  }
 
   if (p === '/api/contacts') {
     const id = url.searchParams.get('contactId') ?? '';

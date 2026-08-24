@@ -32,6 +32,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig } from './lib/config.mjs';
 import { createProvider } from './lib/llm.mjs';
+import { verifyQuote } from './lib/quotes.mjs';
 
 const cfg = loadConfig();
 const OUT_DIR = cfg.output.dir;
@@ -207,12 +208,6 @@ async function completeJson({ system, user, tag }) {
 
 // ------------------------------------------------------- code-layer verifier ---
 
-const normWs = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
-// Quotes are copied from the digest, where newlines render as ' ⏎ ' and long
-// messages end in '…[truncated]' — strip both so a faithful multi-line quote
-// still matches the stored message text.
-const normQuote = (s) => normWs(String(s ?? '').replace(/⏎/g, ' ').replace(/…\[truncated\]/g, ' '));
-
 /** Layer A: quotes must exist verbatim in the cited thread. Deterministic. */
 function codeVerify(findings) {
   const refuted = [];
@@ -223,13 +218,7 @@ function codeVerify(findings) {
       refuted.push({ title: f.title, reason: 'Sin evidencia citada: ningún hallazgo se acepta sin cita textual verificable.', correction: '' });
       continue;
     }
-    const bad = evidence.find((ev) => {
-      const t = threadsById.get(String(ev.thread_id));
-      if (!t) return true;
-      const q = normQuote(ev.quote);
-      if (!q) return true;
-      return !t.messages.some((m) => normWs(m.text).includes(q));
-    });
+    const bad = evidence.find((ev) => !verifyQuote(threadsById.get(String(ev.thread_id)), ev.quote).found);
     if (bad) {
       refuted.push({
         title: f.title,

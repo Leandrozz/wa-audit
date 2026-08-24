@@ -18,15 +18,16 @@
     "report:html": "node src/report-html.mjs",
     "report:docx": "node src/report-docx.mjs",
     "demo": "node tools/demo.mjs",
+    "mcp": "node src/mcp-server.mjs",
     "test": "node --test \"test/*.test.mjs\""
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "ajv": "^8.17.0",
     "cfb": "^1.2.2",
     "docx": "^9.7.1",
     "libphonenumber-js": "^1.11.0",
-    "xlsx": "0.18.5"
-  },
-  "devDependencies": {
-    "ajv": "^8.17.0"
+    "xlsx": "0.18.5",
+    "zod": "^4.4.3"
   }
 }

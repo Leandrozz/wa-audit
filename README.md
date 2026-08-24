@@ -132,6 +132,17 @@ Prefer to run the analysis with your own agent (Claude Code, Cursor, anything)
 instead of the built-in engine? That's a first-class path:
 [analysis/PLAYBOOK.md](analysis/PLAYBOOK.md).
 
+## Or let Claude drive the whole thing (MCP)
+
+`npm run mcp` starts an MCP server that turns Claude Desktop / Claude Code /
+ChatGPT / Cursor into the audit engine: the agent interviews you, guides the
+WAHA setup, shows the pairing **QR right in the chat**, exports the history
+and runs the analysis itself. The server keeps it honest structurally —
+`submit_dimension` rejects any dimension without a recorded verification
+verdict, every evidence quote is re-checked server-side against the corpus,
+and chat content is served as untrusted data. It never sends a WhatsApp
+message. Setup: [docs/mcp-setup.md](docs/mcp-setup.md).
+
 ## The pipeline
 
 ```
