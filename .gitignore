@@ -13,3 +13,6 @@ node_modules/
 
 # Private working notes (contain real session IDs / client paths) — never commit
 BAJADA-DE-CONTEXTO.md
+
+# Marketing assets stay local
+landing/*.pdf
