@@ -32,11 +32,12 @@ WA_OUT_DIR=data/ig-history npm run export:ig
 WA_OUT_DIR=data/ig-history node src/threads.mjs --session ig --no-net
 ```
 
-`--since 365` bounds the pull to the last year. The export is resumable: a
-rerun skips completed conversations.
+`npm run export:ig -- --since 365` bounds the pull to the last year (the
+double dash is required — npm eats bare flags otherwise). The export is
+resumable: a rerun skips completed conversations.
 
 One guardrail on that resume: a rerun whose window reaches further back than
-the saved state does refuses before it makes a single request. Say the first
+the saved state covers, it refuses before it makes a single request. Say the first
 run used `--since 365` and the rerun drops `--since` entirely (full history)
 — resuming would mark threads "done" without ever fetching the older messages
 in that gap, a silent data loss, so it stops loudly instead. Rerun with the
