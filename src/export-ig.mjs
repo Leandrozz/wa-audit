@@ -1,0 +1,158 @@
+/**
+ * src/export-ig.mjs — export the operator's OWN Instagram DM inbox through
+ * the same private web API the official instagram.com client uses.
+ *
+ * Auth is a session cookie the operator copies from their logged-in browser
+ * (docs/ig-setup.md). No passwords ever touch this tool. Read-only: GET
+ * endpoints only, throttled hard, and any challenge stops the run dead.
+ *
+ *   IG_SESSION_ID   sessionid cookie            (required)
+ *   IG_DS_USER_ID   ds_user_id cookie (own id)  (required)
+ *   IG_BASE_URL     default https://www.instagram.com (mock hook for tests)
+ *   --since <days>  only pull items newer than N days (default: everything)
+ *
+ * Emits the corpus contract (NOWEB convention): `from` = counterparty
+ * <pk>@ig in BOTH directions, timestamps in seconds (IG sends microseconds).
+ * Resumable: completed threads are appended to messages.jsonl and recorded
+ * in ig-export-state.json; a rerun skips them.
+ */
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { loadConfig } from './lib/config.mjs';
+
+const SESSION_ID = process.env.IG_SESSION_ID;
+const DS_USER_ID = process.env.IG_DS_USER_ID;
+const BASE = (process.env.IG_BASE_URL || 'https://www.instagram.com').replace(/\/+$/, '');
+if (!SESSION_ID || !DS_USER_ID) {
+  console.error('IG_SESSION_ID and IG_DS_USER_ID are required (cookies from your logged-in browser — docs/ig-setup.md)');
+  process.exit(1);
+}
+
+const sinceAt = process.argv.indexOf('--since');
+const SINCE_SEC = sinceAt > -1
+  ? Math.floor(Date.now() / 1000) - Number(process.argv[sinceAt + 1]) * 86_400
+  : 0;
+
+const OUT_DIR = loadConfig().output.dir;
+const MESSAGES_FILE = path.join(OUT_DIR, 'messages.jsonl');
+const STATE_FILE = path.join(OUT_DIR, 'ig-export-state.json');
+
+// Hard floor. Reading your own inbox at human pace is the whole risk posture.
+const THROTTLE_MS = 3000;
+const jitter = () => THROTTLE_MS + Math.floor(Math.random() * 2000);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const HEADERS = {
+  'x-ig-app-id': '936619743392459', // the public web client's app id
+  'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
+  cookie: `sessionid=${SESSION_ID}; ds_user_id=${DS_USER_ID}`,
+  accept: 'application/json',
+};
+
+let state = { done: [] };
+if (existsSync(STATE_FILE)) {
+  state = JSON.parse(await readFile(STATE_FILE, 'utf8'));
+  console.log(`Resuming: ${state.done.length} thread(s) already exported`);
+}
+const saveState = () => writeFile(STATE_FILE, JSON.stringify(state, null, 2), 'utf8');
+
+/** Stop-dead: challenges are never retried into. */
+async function get(pathname) {
+  await sleep(jitter());
+  const res = await fetch(`${BASE}${pathname}`, { headers: HEADERS });
+  const text = await res.text();
+  let body = null;
+  try { body = JSON.parse(text); } catch { /* HTML = login redirect */ }
+  const challenge = res.status === 401 || res.status === 429 || !body ||
+    body.message === 'challenge_required' || body.message === 'login_required';
+  if (challenge) {
+    await saveState();
+    console.error(`\nInstagram interrupted the export (HTTP ${res.status}${body?.message ? `, ${body.message}` : ''}).`);
+    console.error('State was saved — a rerun resumes where this stopped. Do NOT rerun immediately:');
+    console.error('  1. Open instagram.com in your browser and complete any verification it shows.');
+    console.error('  2. Wait a few hours. 3. Refresh IG_SESSION_ID/IG_DS_USER_ID from devtools. 4. Rerun.');
+    process.exit(1);
+  }
+  if (!res.ok) throw new Error(`IG HTTP ${res.status}: ${text.slice(0, 200)}`);
+  return body;
+}
+
+/** IG item → NOWEB-shape marker (same fallthrough idea as export-kapso). */
+function messageShape(item) {
+  switch (item.item_type) {
+    case 'voice_media': return { audioMessage: { ptt: true } };
+    case 'media': return item.media?.media_type === 2 ? { videoMessage: {} } : { imageMessage: {} };
+    case 'animated_media': return { stickerMessage: {} };
+    default: return null; // text, link, unknown → plain text
+  }
+}
+
+function toRawLine(item, counterpart) {
+  const sec = Math.floor(Number(item.timestamp) / 1e6); // µs → s
+  if (sec < SINCE_SEC) return null;
+  const shape = messageShape(item);
+  const fromMe = String(item.user_id) === DS_USER_ID;
+  const out = {
+    id: item.item_id,
+    timestamp: sec,
+    from: `${counterpart.pk}@ig`, // counterparty in BOTH directions
+    fromMe,
+    body: item.text ?? item.link?.text ?? '',
+    hasMedia: !!shape, // voice notes count as media, same as the WAHA lane
+    _data: {},
+  };
+  if (!fromMe) out._data.pushName = counterpart.username || counterpart.full_name || '';
+  if (shape) out._data.message = shape;
+  return out;
+}
+
+await mkdir(OUT_DIR, { recursive: true });
+console.log(`Exporting your Instagram DM inbox (read-only, throttled ≥${THROTTLE_MS / 1000}s/request)...`);
+
+// 1) walk the inbox
+const threads = [];
+let cursor = null;
+for (;;) {
+  const qs = new URLSearchParams({ limit: '20' });
+  if (cursor) qs.set('cursor', cursor);
+  const page = await get(`/api/v1/direct_v2/inbox/?${qs}`);
+  threads.push(...(page.inbox?.threads ?? []));
+  if (!page.inbox?.has_older) break;
+  cursor = page.inbox.oldest_cursor;
+}
+const groups = threads.filter((t) => t.is_group || (t.users?.length ?? 0) > 1);
+const oneToOne = threads.filter((t) => !groups.includes(t) && (t.users?.length ?? 0) === 1);
+console.log(`Inbox: ${threads.length} thread(s) · skipped ${groups.length} group thread(s)`);
+
+// 2) walk each 1:1 thread back in time; append per completed thread (resume unit)
+let total = 0;
+for (const t of oneToOne) {
+  if (state.done.includes(t.thread_id)) continue;
+  const counterpart = t.users[0];
+  const lines = [];
+  let tCursor = null;
+  for (;;) {
+    const qs = new URLSearchParams({ limit: '50' });
+    if (tCursor) qs.set('cursor', tCursor);
+    const page = await get(`/api/v1/direct_v2/threads/${encodeURIComponent(t.thread_id)}/?${qs}`);
+    const items = page.thread?.items ?? [];
+    let pastSince = false;
+    for (const item of items) {
+      const raw = toRawLine(item, counterpart);
+      if (raw) lines.push(JSON.stringify(raw));
+      else if (SINCE_SEC) pastSince = true; // items are newest→oldest
+    }
+    if (pastSince || !page.thread?.has_older || items.length === 0) break;
+    tCursor = page.thread.oldest_cursor;
+  }
+  if (lines.length) await appendFile(MESSAGES_FILE, lines.join('\n') + '\n', 'utf8');
+  total += lines.length;
+  state.done.push(t.thread_id);
+  await saveState();
+  console.log(`  @${counterpart.username}: ${lines.length} message(s) (${total} total)`);
+}
+
+console.log(`\n✓ ${total} messages → ${MESSAGES_FILE}`);
+console.log('\nNext: node src/threads.mjs --session ig --no-net');
+console.log('Tip: keep IG corpora in their own dir (WA_OUT_DIR=data/ig-history) so channels never mix.');
