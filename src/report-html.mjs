@@ -87,7 +87,7 @@ const html = `<!doctype html>
 
 <header class="top">
   <h1>${esc(BUSINESS)} — Historial de ${canal}: informe maestro</h1>
-  <div class="sub">Generado el ${new Date().toISOString().slice(0, 10)} · sesión WAHA ${esc(summary.session)} · ${num(summary.lines_read)} mensajes crudos leídos</div>
+  <div class="sub">Generado el ${new Date().toISOString().slice(0, 10)} · sesión ${esc(summary.session)} · ${num(summary.lines_read)} mensajes crudos leídos</div>
 </header>
 
 ${hayResidual ? `
@@ -171,7 +171,9 @@ ${(d.limitations || []).length ? `<p class="meta"><b>Limitaciones:</b> ${(d.limi
 }).join('\n')}
 
 <h2>Metodología y límites</h2>
-<p class="meta">El origen es un dump completo del historial exportado desde WAHA (${num(summary.lines_read)} líneas crudas: ${num(summary.messages_included)} al corpus, ${num(summary.group_messages_excluded)} de grupos excluidas, ${num(summary.malformed_messages + summary.messages_without_sender)} malformadas o sin remitente). Verificación de suma contra el dump: <b>${summary.count_check_ok ? 'OK' : 'FALLÓ'}</b>. LIDs: ${num(summary.lids_resolved)} resueltos, ${num(summary.lids_unresolved)} sin resolver; ${summary.lid_cus_merges} fusiones de identidad. La mediana de respuesta se ancla al primer mensaje de cada racha entrante; una racha sin respuesta no cuenta. El dump y el corpus quedan en el directorio de salida local; la única transmisión externa posible del pipeline es la de la fase de análisis hacia el proveedor de LLM configurado (ninguna con un motor local). Cada dimensión pasó por un verificador independiente; los hallazgos refutados quedan registrados arriba para que nadie vuelva a citar los números viejos.</p>
+<p class="meta">El origen es ${summary.channel === 'instagram'
+  ? 'un export de la bandeja de DMs de Instagram del negocio, leído con la sesión del operador (solo lectura)'
+  : 'un dump completo del historial exportado desde WAHA'} (${num(summary.lines_read)} líneas crudas: ${num(summary.messages_included)} al corpus, ${num(summary.group_messages_excluded)} de grupos excluidas, ${num(summary.malformed_messages + summary.messages_without_sender)} malformadas o sin remitente). Verificación de suma contra el dump: <b>${summary.count_check_ok ? 'OK' : 'FALLÓ'}</b>. LIDs: ${num(summary.lids_resolved)} resueltos, ${num(summary.lids_unresolved)} sin resolver; ${summary.lid_cus_merges} fusiones de identidad. La mediana de respuesta se ancla al primer mensaje de cada racha entrante; una racha sin respuesta no cuenta. El dump y el corpus quedan en el directorio de salida local; la única transmisión externa posible del pipeline es la de la fase de análisis hacia el proveedor de LLM configurado (ninguna con un motor local). Cada dimensión pasó por un verificador independiente; los hallazgos refutados quedan registrados arriba para que nadie vuelva a citar los números viejos.</p>
 ${(summary.warnings || []).length ? `<h3>Advertencias de la corrida</h3><ul class="meta">${(summary.warnings || []).map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
 
 <footer>

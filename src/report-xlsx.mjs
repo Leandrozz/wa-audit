@@ -112,7 +112,7 @@ const push = (fila, estilo) => {
 };
 
 push([`${BUSINESS} — Historial de ${canal}: informe maestro`], 3);
-push([`Generado el ${new Date().toISOString().slice(0, 10)} a partir del dump de la sesión WAHA ${summary.session}`]);
+push([`Generado el ${new Date().toISOString().slice(0, 10)} a partir del dump de la sesión ${summary.session}`]);
 push([]);
 if (hayResidual) {
   push(['LEER PRIMERO — el rango de fechas engaña'], 1);

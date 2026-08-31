@@ -85,7 +85,7 @@ children.push(new Paragraph({
   children: [new TextRun({ text: clean(`${BUSINESS} — Historial de ${canal}: informe maestro`), bold: true, size: 40, color: ACCENT })],
   spacing: { after: 60 },
 }));
-children.push(meta(`Generado el ${new Date().toISOString().slice(0, 10)} · sesión WAHA ${summary.session} · ${num(summary.lines_read)} mensajes crudos leídos`));
+children.push(meta(`Generado el ${new Date().toISOString().slice(0, 10)} · sesión ${summary.session} · ${num(summary.lines_read)} mensajes crudos leídos`));
 
 if (hayResidual) {
   children.push(h('LEER PRIMERO — el rango de fechas engaña', HeadingLevel.HEADING_2));
@@ -195,7 +195,9 @@ for (const d of dimensiones) {
 // -------------------------------------------------------------- methodology
 children.push(h('Metodología y límites'));
 children.push(meta(
-  `Origen: dump completo del historial exportado desde WAHA (${num(summary.lines_read)} líneas crudas: ${num(summary.messages_included)} al corpus, ` +
+  `Origen: ${summary.channel === 'instagram'
+    ? 'un export de la bandeja de DMs de Instagram del negocio, leído con la sesión del operador (solo lectura)'
+    : 'dump completo del historial exportado desde WAHA'} (${num(summary.lines_read)} líneas crudas: ${num(summary.messages_included)} al corpus, ` +
   `${num(summary.group_messages_excluded)} de grupos excluidas, ${num(summary.malformed_messages + summary.messages_without_sender)} malformadas o sin remitente). ` +
   `Verificación de suma contra el dump: ${summary.count_check_ok ? 'OK' : 'FALLÓ'}. LIDs: ${num(summary.lids_resolved)} resueltos, ${num(summary.lids_unresolved)} sin resolver; ` +
   `${summary.lid_cus_merges} fusiones de identidad. La mediana de respuesta se ancla al primer mensaje de cada racha entrante; una racha sin respuesta no cuenta. ` +

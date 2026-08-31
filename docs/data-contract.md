@@ -12,9 +12,10 @@ language (presentation).
   "schema_version": 1,
   "generated_at": "2026-08-24T12:00:00.000Z",
   "session": "my-session",
+  "channel": "whatsapp",               // "whatsapp" | "instagram"
   "threads": [
     {
-      "thread_id": "5491155501234",      // phone without '+', or "lid_<id>" if unresolved
+      "thread_id": "5491155501234",      // phone without '+', "lid_<id>" if unresolved, or "ig:<id>" for Instagram threads
       "phone": "+5491155501234",          // canonical E.164, or null
       "phone_display": "+54 9 11 5550 1234",
       "jids": ["5491155501234@c.us", "200000000000001@lid"],  // all JIDs merged into this thread
@@ -68,7 +69,7 @@ language (presentation).
 ## summary.json — run counters
 
 Flat object, all counters computed while building the corpus:
-`lines_read`, `group_messages_excluded`, `malformed_messages`,
+`channel` ("whatsapp" | "instagram"), `lines_read`, `group_messages_excluded`, `malformed_messages`,
 `messages_without_sender`, `messages_included`, `one_to_one_chats`,
 `lid_jids`, `cus_jids`, `other_jids`, `lids_resolved`, `lids_unresolved`,
 `lid_cus_merges`, `multi_jid_threads`, `threads`, `two_way_threads`,
