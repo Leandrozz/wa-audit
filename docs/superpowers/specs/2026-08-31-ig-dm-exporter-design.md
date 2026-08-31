@@ -56,9 +56,10 @@ and even collide with a CRM number. Fix: `@ig` JIDs skip phone
 normalization entirely — `key = "ig:<userId>"`, `phone = null`, display
 falls back to pushName/username.
 
-**Corpus meta**: the corpus gains `source: "instagram"` (default
-`"whatsapp"`) so renderers can label the channel. Renderers print it if
-present; no other renderer changes.
+**Corpus meta**: the corpus gains `channel: "instagram"` (default
+`"whatsapp"`) in `summary.json` and `threads.json` — named `channel`, not
+`source`, because `summary.source` already holds the messages-file path.
+Renderers use it only for their title lines; no other renderer changes.
 
 ## 2. The exporter (`src/export-ig.mjs`, `npm run export:ig`)
 
