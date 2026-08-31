@@ -61,3 +61,47 @@ test('IG lane: export maps the private-API shapes onto the corpus contract', asy
     assert.ok(existsSync(path.join(out, 'ig-export-state.json')), 'resume state written');
   } finally { mock.kill(); }
 });
+
+test('IG lane: a broader rerun refuses to resume over narrower --since state (review round 1)', async () => {
+  const mock = await startMockIg();
+  try {
+    const out = tmpDir();
+    const stateFile = path.join(out, 'ig-export-state.json');
+    const messagesFile = path.join(out, 'messages.jsonl');
+    const readLines = () => existsSync(messagesFile)
+      ? readFileSync(messagesFile, 'utf8').split('\n').filter((l) => l.trim())
+      : [];
+
+    // 1) Narrow run: the fixture is over a year old, so --since 100 (days) excludes
+    // every message. Every 1:1 thread still gets walked and marked "done" — correctly,
+    // since there's genuinely nothing newer than the cutoff to fetch.
+    const narrow = run('src/export-ig.mjs', { args: ['--since', '100'], env: igEnv(out) });
+    assert.equal(narrow.status, 0, `narrow export failed:\n${narrow.stdout}\n${narrow.stderr}`);
+    assert.equal(readLines().length, 0, 'the --since window excludes every fixture message');
+    const state1 = JSON.parse(readFileSync(stateFile, 'utf8'));
+    assert.equal(state1.done.length, 3, 'all 3 one-to-one threads marked done');
+    assert.ok(state1.since_sec > 0, 'the narrow run records its cutoff in state');
+
+    // 2) Broader rerun, same output dir, no --since: the 8 real fixture messages sit
+    // BEHIND the old cutoff. Resuming would skip them silently (they're all in `done`
+    // already). This must refuse loudly instead — and before any throttled request,
+    // which a tight wall-clock bound on this call proves (a real request costs >=3s).
+    const t0 = Date.now();
+    const broad = run('src/export-ig.mjs', { env: igEnv(out) });
+    const elapsedMs = Date.now() - t0;
+    assert.equal(broad.status, 1, 'a broader rerun over narrower resume state must fail loudly');
+    const msg = broad.stdout + broad.stderr;
+    assert.match(msg, /further back/i, 'explains the window mismatch');
+    assert.match(msg, /silent data loss/i, 'names the risk being refused');
+    assert.match(msg, /rerun with the same/i, 'gives remediation option 1 (same/narrower --since)');
+    assert.match(msg, /ig-export-state\.json/, 'gives remediation option 2 (wipe state for a fresh export)');
+    assert.ok(elapsedMs < 2500, `refusal must happen before the first throttled request (took ${elapsedMs}ms)`);
+    assert.equal(readLines().length, 0, 'refused run appended nothing to messages.jsonl');
+    const state2 = JSON.parse(readFileSync(stateFile, 'utf8'));
+    assert.deepEqual(state2, state1, 'refused run never touched the state file');
+
+    // 3) Same window again: the legitimate resume path stays open (no false refusal).
+    const again = run('src/export-ig.mjs', { args: ['--since', '100'], env: igEnv(out) });
+    assert.equal(again.status, 0, `same-window rerun should still resume cleanly:\n${again.stdout}\n${again.stderr}`);
+  } finally { mock.kill(); }
+});

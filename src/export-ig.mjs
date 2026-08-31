@@ -53,8 +53,25 @@ const HEADERS = {
 let state = { done: [] };
 if (existsSync(STATE_FILE)) {
   state = JSON.parse(await readFile(STATE_FILE, 'utf8'));
+  // A state file built under a narrower --since must never be resumed by a
+  // broader run: threads already marked "done" were only walked back to the
+  // OLD cutoff, so a broader rerun would silently skip the older messages in
+  // between instead of fetching them. Refuse loudly, before any request.
+  const storedSince = state.since_sec ?? 0; // missing field = pre-existing full-history state
+  if (SINCE_SEC < storedSince) {
+    const fmt = (s) => (s === 0 ? 'the full history (no --since)' : new Date(s * 1000).toISOString());
+    console.error(`\nThis run's window goes further back than the saved export state covers.`);
+    console.error(`  saved state cutoff:  ${fmt(storedSince)}`);
+    console.error(`  this run's cutoff:   ${fmt(SINCE_SEC)}`);
+    console.error('Resuming now would mark threads "done" without ever fetching the older messages');
+    console.error('in that gap — a silent data loss. Refusing instead. Two ways out:');
+    console.error('  1. Rerun with the same (or a narrower) --since <days> that produced the saved state.');
+    console.error(`  2. Delete ig-export-state.json and messages.jsonl in ${OUT_DIR} for a fresh full export.`);
+    process.exit(1);
+  }
   console.log(`Resuming: ${state.done.length} thread(s) already exported`);
 }
+state.since_sec = SINCE_SEC;
 const saveState = () => writeFile(STATE_FILE, JSON.stringify(state, null, 2), 'utf8');
 
 /** Stop-dead: challenges are never retried into. */
