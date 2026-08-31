@@ -11,8 +11,12 @@
  * Timestamps are MICROSECOND strings, like the real API.
  */
 import { createServer } from 'node:http';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const PORT = Number(process.argv[2] ?? 8439);
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const portArg = process.argv[2];
+const PORT = (portArg && !portArg.startsWith('--')) ? Number(portArg) : 8439;
 const chAt = process.argv.indexOf('--challenge-after');
 const CHALLENGE_AFTER = chAt > -1 ? Number(process.argv[chAt + 1]) : Infinity;
 
@@ -22,12 +26,13 @@ const US = { maria: { pk: '77000001', username: 'maria.deco', full_name: 'María
              lucia:  { pk: '77000003', username: 'lucia.eventos', full_name: 'Lucía Eventos' } };
 
 const us = (ts) => String(ts * 1_000_000); // seconds → microsecond string
-let iid = 0;
-const item = (userId, tsSec, type, extra = {}) =>
-  ({ item_id: `it_${++iid}`, user_id: userId, timestamp: us(tsSec), item_type: type, ...extra });
 
 // Three 1:1 threads + one group (the exporter must skip the group).
 export function igFixture() {
+  let iid = 0;
+  const item = (userId, tsSec, type, extra = {}) =>
+    ({ item_id: `it_${++iid}`, user_id: userId, timestamp: us(tsSec), item_type: type, ...extra });
+
   return { ownUserId: OWN_ID, threads: [
     { thread_id: 'th_maria', is_group: false, users: [US.maria], items: [
       item(OWN_ID, 1756100300, 'text', { text: 'Perfecto, te agendo para el jueves' }),
@@ -49,38 +54,40 @@ export function igFixture() {
   ] };
 }
 
-const FIX = igFixture();
-let requests = 0;
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const FIX = igFixture();
+  let requests = 0;
 
-const server = createServer((req, res) => {
-  requests++;
-  const send = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
-  if (requests > CHALLENGE_AFTER) return send(400, { message: 'challenge_required', status: 'fail' });
-  if (!String(req.headers.cookie ?? '').includes('sessionid=')) return send(403, { message: 'login_required', status: 'fail' });
+  const server = createServer((req, res) => {
+    requests++;
+    const send = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
+    if (requests > CHALLENGE_AFTER) return send(400, { message: 'challenge_required', status: 'fail' });
+    if (!String(req.headers.cookie ?? '').includes('sessionid=')) return send(403, { message: 'login_required', status: 'fail' });
 
-  const url = new URL(req.url, `http://localhost:${PORT}`);
-  const limit = Number(url.searchParams.get('limit') ?? 20);
-  const cursor = Number(url.searchParams.get('cursor') ?? 0);
+    const url = new URL(req.url, `http://localhost:${PORT}`);
+    const limit = Number(url.searchParams.get('limit') ?? 20);
+    const cursor = Number(url.searchParams.get('cursor') ?? 0);
 
-  if (url.pathname === '/api/v1/direct_v2/inbox/') {
-    const page = FIX.threads.slice(cursor, cursor + limit);
-    const next = cursor + page.length;
-    return send(200, { inbox: {
-      threads: page.map(({ items, ...t }) => t),
-      has_older: next < FIX.threads.length,
-      oldest_cursor: String(next),
-    } });
-  }
-  const m = url.pathname.match(/^\/api\/v1\/direct_v2\/threads\/([^/]+)\/$/);
-  if (m) {
-    const t = FIX.threads.find((x) => x.thread_id === m[1]);
-    if (!t) return send(404, { message: 'not found', status: 'fail' });
-    const page = t.items.slice(cursor, cursor + limit); // items newest→oldest
-    const next = cursor + page.length;
-    return send(200, { thread: { thread_id: t.thread_id, users: t.users, items: page,
-      has_older: next < t.items.length, oldest_cursor: String(next) } });
-  }
-  send(404, { message: 'not found', status: 'fail' });
-});
+    if (url.pathname === '/api/v1/direct_v2/inbox/') {
+      const page = FIX.threads.slice(cursor, cursor + limit);
+      const next = cursor + page.length;
+      return send(200, { inbox: {
+        threads: page.map(({ items, ...t }) => t),
+        has_older: next < FIX.threads.length,
+        oldest_cursor: String(next),
+      } });
+    }
+    const m = url.pathname.match(/^\/api\/v1\/direct_v2\/threads\/([^/]+)\/$/);
+    if (m) {
+      const t = FIX.threads.find((x) => x.thread_id === m[1]);
+      if (!t) return send(404, { message: 'not found', status: 'fail' });
+      const page = t.items.slice(cursor, cursor + limit); // items newest→oldest
+      const next = cursor + page.length;
+      return send(200, { thread: { thread_id: t.thread_id, users: t.users, items: page,
+        has_older: next < t.items.length, oldest_cursor: String(next) } });
+    }
+    send(404, { message: 'not found', status: 'fail' });
+  });
 
-server.listen(PORT, () => console.log(`mock-ig listening on ${PORT} (challenge after ${CHALLENGE_AFTER})`));
+  server.listen(PORT, () => console.log(`mock-ig listening on ${PORT} (challenge after ${CHALLENGE_AFTER})`));
+}
