@@ -37,7 +37,7 @@ OpenAI-compatible endpoint, for a fully offline run.
 > discourage bulk messaging, spam, stalkerware, or surveillance of people.
 > For business-critical integrations, consider the official WhatsApp Business
 > API. The intended use case is a business analyzing **its own** conversation
-> history.
+> history. The same applies to the Instagram lane.
 >
 > **Personal data:** chat history is personal data of third parties. You are
 > solely responsible for having a valid legal basis to process it and for
@@ -148,6 +148,16 @@ Same corpus, same verifier, same reports. One honest tradeoff: the official
 platform has no retroactive backfill, so history covers what flowed through
 Kapso since the number was connected there. Details and a mock server to try
 it without an account: [docs/kapso-setup.md](docs/kapso-setup.md).
+
+## Instagram DMs too
+
+The same audit runs over your Instagram inbox: `npm run export:ig` reads
+your own DMs through the web client's API (cookie from your browser, no
+passwords, read-only, hard-throttled, stops dead on any checkpoint) and
+emits the same corpus contract. 1:1 threads only, identity by IG user id,
+reports come out labeled Instagram. Honest notes — unofficial client, test
+account first, and the official zero-risk path (Accounts Center → Download
+your information) — in [docs/ig-setup.md](docs/ig-setup.md).
 
 ## Or let Claude drive the whole thing (MCP)
 

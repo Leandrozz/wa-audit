@@ -37,7 +37,8 @@ OpenAI self-hosteado, para una corrida 100% offline.
 > expresamente la mensajería masiva, el spam, el stalkerware y la vigilancia
 > de personas. Para integraciones críticas de negocio, considerá la API
 > oficial de WhatsApp Business. El caso de uso previsto es un negocio
-> analizando **su propio** historial de conversaciones.
+> analizando **su propio** historial de conversaciones. Lo mismo aplica para
+> Instagram.
 >
 > **Datos personales:** el historial de chats son datos personales de
 > terceros. Sos el único responsable de tener una base legal válida para
@@ -142,6 +143,17 @@ Mismo corpus, mismo verificador, mismos informes. El tradeoff honesto: la
 plataforma oficial no tiene backfill retroactivo, así que el historial cubre
 lo que pasó por Kapso desde que conectaste el número. Detalles y un mock para
 probarlo sin cuenta: [docs/kapso-setup.md](docs/kapso-setup.md).
+
+## Instagram DMs también
+
+La misma auditoría corre sobre tu inbox de Instagram: `npm run export:ig`
+lee tus propios DMs a través de la API del cliente web (cookie de tu
+navegador, sin contraseñas, solo lectura, con throttle duro, se frena en
+seco ante cualquier checkpoint) y emite el mismo contrato de corpus. Solo
+hilos 1:1, identidad por id de usuario de IG, los informes salen etiquetados
+como Instagram. Notas honestas en [docs/ig-setup.md](docs/ig-setup.md):
+cliente no oficial, cuenta de prueba primero, y el camino oficial de riesgo
+cero (Accounts Center → Download your information).
 
 ## O dejá que Claude maneje todo (MCP)
 
