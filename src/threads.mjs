@@ -286,18 +286,26 @@ for (const [jid, bucket] of byJid) {
     warn(`${jid} is a WhatsApp system pseudo-contact (${bucket.messages.length} message/s); flagged with is_system=true`);
   }
   const isLid = jid.endsWith('@lid');
-  const rawNumber = isLid ? (cache[jid]?.pn ?? '') : jid.split('@')[0];
+  const isIg = jid.endsWith('@ig');
+  // An IG user id is NOT a phone number: 10-11 digits would normalize into a
+  // plausible phone and could even collide with a CRM number. Skip entirely.
+  const rawNumber = isLid ? (cache[jid]?.pn ?? '') : isIg ? '' : jid.split('@')[0];
   const phone = normalizeJid(rawNumber);
   // An unresolved @lid can NOT be normalized: its digits are not a phone
   // number. It gets its own thread and a flag — never an invented number.
-  const key = phone ?? `lid:${jid.split('@')[0]}`;
+  const key = phone ?? `${isIg ? 'ig' : 'lid'}:${jid.split('@')[0]}`;
 
   let c = convs.get(key);
   if (!c) {
-    c = { key, phone, jids: [], origins: new Set(), names: [], messages: [], unresolved_lid: !phone, is_system: SYSTEM.has(jid) };
+    // !isIg (not "&& isLid"): the old `!phone` must stay byte-identical for every
+    // non-@ig jid, including the rare case where phone fails to normalize for a
+    // reason OTHER than an unresolved @lid (e.g. the "status@broadcast" system
+    // pseudo-contact, whose local part has no digits at all). Only @ig gets a
+    // deliberate override, since its phone is null by construction, not failure.
+    c = { key, phone, jids: [], origins: new Set(), names: [], messages: [], unresolved_lid: !phone && !isIg, is_system: SYSTEM.has(jid) };
     convs.set(key, c);
   }
-  const origin = isLid ? 'lid' : 'c.us';
+  const origin = isLid ? 'lid' : isIg ? 'ig' : 'c.us';
   if (phone && c.origins.size && !c.origins.has(origin)) merges++;
   c.origins.add(origin);
   c.jids.push(jid);
@@ -385,9 +393,11 @@ for (const c of convs.values()) {
     (!!c.phone && INTERNAL_NUMBERS.has(c.phone));
   if (isInternal) internal++;
   threads.push({
-    thread_id: c.phone ? c.phone.replace('+', '') : `lid_${c.key.slice(4)}`,
+    thread_id: c.phone ? c.phone.replace('+', '') : c.key.startsWith('ig:') ? c.key : `lid_${c.key.slice(4)}`,
     phone: c.phone,
-    phone_display: c.phone ? display(c.phone) : `@lid ${c.key.slice(4)} (unresolved)`,
+    phone_display: c.phone ? display(c.phone)
+      : c.key.startsWith('ig:') ? `IG:${c.key.slice(3)}`
+      : `@lid ${c.key.slice(4)} (unresolved)`,
     jids: c.jids,
     contact_name: name,
     unresolved_lid: c.unresolved_lid,

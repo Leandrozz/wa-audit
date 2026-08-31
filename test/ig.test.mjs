@@ -105,3 +105,55 @@ test('IG lane: a broader rerun refuses to resume over narrower --since state (re
     assert.equal(again.status, 0, `same-window rerun should still resume cleanly:\n${again.stdout}\n${again.stderr}`);
   } finally { mock.kill(); }
 });
+
+test('IG lane: corpus keys @ig by user id — never as a phone number', async () => {
+  const fix = igFixture();
+  const oneToOne = fix.threads.filter((t) => !t.is_group);
+
+  const mock = await startMockIg();
+  let out;
+  try {
+    out = tmpDir();
+    const exp = run('src/export-ig.mjs', { env: igEnv(out) });
+    assert.equal(exp.status, 0, `export-ig failed:\n${exp.stdout}\n${exp.stderr}`);
+  } finally { mock.kill(); }
+
+  const threads = run('src/threads.mjs', { args: ['--session', 'ig', '--no-net'], env: igEnv(out) });
+  assert.equal(threads.status, 0, `threads failed:\n${threads.stdout}\n${threads.stderr}`);
+
+  const summary = JSON.parse(readFileSync(path.join(out, 'summary.json'), 'utf8'));
+  assert.equal(summary.count_check_ok, true);
+  assert.equal(summary.threads, oneToOne.length);
+  assert.equal(summary.lids_unresolved, 0, '@ig must never be mistaken for an unresolved @lid');
+
+  const corpus = JSON.parse(readFileSync(path.join(out, 'threads.json'), 'utf8'));
+  for (const t of corpus.threads) {
+    assert.match(t.thread_id, /^ig:\d+$/, `IG thread key: ${t.thread_id}`);
+    assert.equal(t.phone, null, 'an IG user id must NEVER normalize into a phone');
+    assert.match(t.phone_display, /^IG:\d+$/);
+  }
+  const maria = corpus.threads.find((t) => t.thread_id === 'ig:77000001');
+  assert.equal(maria.contact_name, 'maria.deco', 'username flows in as contact_name via pushName');
+  assert.equal(maria.metrics.inbound, 2);
+  assert.equal(maria.metrics.outbound, 1);
+});
+
+test('IG identity: a 10-digit IG id that LOOKS like an AR phone still keys as ig:', async () => {
+  // Hand-written 2-line corpus: digits that normalizeInput would happily turn
+  // into a phone with defaultCountry AR. The @ig suffix must prevent that.
+  const out = tmpDir();
+  const jid = '1155443322@ig';
+  const rows = [
+    { id: 'a1', timestamp: 1756000100, from: jid, fromMe: false, body: 'hola', hasMedia: false, _data: { pushName: 'trampa.ig' } },
+    { id: 'a2', timestamp: 1756000200, from: jid, fromMe: true, body: 'buenas', hasMedia: false, _data: {} },
+  ];
+  const { writeFileSync } = await import('node:fs');
+  writeFileSync(path.join(out, 'messages.jsonl'), rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
+
+  const threads = run('src/threads.mjs', { args: ['--session', 'ig', '--no-net'], env: pipelineEnv(out) });
+  assert.equal(threads.status, 0, `threads failed:\n${threads.stdout}\n${threads.stderr}`);
+  const corpus = JSON.parse(readFileSync(path.join(out, 'threads.json'), 'utf8'));
+  assert.equal(corpus.threads.length, 1);
+  assert.equal(corpus.threads[0].thread_id, 'ig:1155443322');
+  assert.equal(corpus.threads[0].phone, null);
+});
