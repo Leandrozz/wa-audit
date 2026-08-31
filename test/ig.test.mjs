@@ -159,3 +159,54 @@ test('IG identity: a 10-digit IG id that LOOKS like an AR phone still keys as ig
   assert.equal(corpus.threads[0].thread_id, 'ig:1155443322');
   assert.equal(corpus.threads[0].phone, null);
 });
+
+test('IG lane: challenge stops the run dead, state survives, rerun resumes and completes', async () => {
+  const fix = igFixture();
+  const oneToOne = fix.threads.filter((t) => !t.is_group);
+  const expectedLines = oneToOne.reduce((a, t) => a + t.items.length, 0);
+  const out = tmpDir();
+
+  // Run 1: the mock throws a challenge mid-run (after inbox + first thread).
+  let mock = await startMockIg(['--challenge-after', '3']);
+  try {
+    const exp1 = run('src/export-ig.mjs', { env: igEnv(out) });
+    assert.equal(exp1.status, 1, 'challenge must exit non-zero');
+    assert.match(exp1.stderr, /interrupted|challenge/i);
+    assert.ok(existsSync(path.join(out, 'ig-export-state.json')), 'state saved on abort');
+  } finally { mock.kill(); }
+
+  // Run 2: clean mock; the exporter must skip finished threads and complete.
+  mock = await startMockIg();
+  try {
+    const exp2 = run('src/export-ig.mjs', { env: igEnv(out) });
+    assert.equal(exp2.status, 0, `resume failed:\n${exp2.stdout}\n${exp2.stderr}`);
+    assert.match(exp2.stdout, /Resuming/);
+    const lines = readFileSync(path.join(out, 'messages.jsonl'), 'utf8').split('\n').filter((l) => l.trim());
+    const ids = new Set(lines.map((l) => JSON.parse(l).id));
+    assert.equal(ids.size, lines.length, 'no duplicated messages after resume');
+    assert.equal(lines.length, expectedLines, 'resume completes the full corpus');
+  } finally { mock.kill(); }
+});
+
+test('IG lane: --since bounds the pull', async () => {
+  const mock = await startMockIg();
+  try {
+    // Fixture timestamps are ~2025; --since 100 days excludes everything,
+    // and stays exclusionary forever as the fixture only gets older.
+    const out = tmpDir();
+    const exp = run('src/export-ig.mjs', { args: ['--since', '100'], env: igEnv(out) });
+    assert.equal(exp.status, 0, `export-ig --since failed:\n${exp.stdout}\n${exp.stderr}`);
+    assert.ok(!existsSync(path.join(out, 'messages.jsonl')) ||
+      readFileSync(path.join(out, 'messages.jsonl'), 'utf8').trim() === '',
+      'nothing newer than 100 days in the fixture');
+
+    // --since 10000 days (~27 years) includes the whole fixture.
+    const out2 = tmpDir();
+    const exp2 = run('src/export-ig.mjs', { args: ['--since', '10000'], env: igEnv(out2) });
+    assert.equal(exp2.status, 0);
+    const fix = igFixture();
+    const expected = fix.threads.filter((t) => !t.is_group).reduce((a, t) => a + t.items.length, 0);
+    const lines = readFileSync(path.join(out2, 'messages.jsonl'), 'utf8').split('\n').filter((l) => l.trim());
+    assert.equal(lines.length, expected);
+  } finally { mock.kill(); }
+});
