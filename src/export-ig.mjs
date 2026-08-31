@@ -17,12 +17,13 @@
  * in ig-export-state.json; a rerun skips them.
  */
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
+import { createInterface } from 'node:readline';
 import path from 'node:path';
 import { loadConfig } from './lib/config.mjs';
 
-const SESSION_ID = process.env.IG_SESSION_ID;
-const DS_USER_ID = process.env.IG_DS_USER_ID;
+const SESSION_ID = (process.env.IG_SESSION_ID ?? '').trim();
+const DS_USER_ID = (process.env.IG_DS_USER_ID ?? '').trim();
 const BASE = (process.env.IG_BASE_URL || 'https://www.instagram.com').replace(/\/+$/, '');
 if (!SESSION_ID || !DS_USER_ID) {
   console.error('IG_SESSION_ID and IG_DS_USER_ID are required (cookies from your logged-in browser — docs/ig-setup.md)');
@@ -38,6 +39,32 @@ const OUT_DIR = loadConfig().output.dir;
 const MESSAGES_FILE = path.join(OUT_DIR, 'messages.jsonl');
 const STATE_FILE = path.join(OUT_DIR, 'ig-export-state.json');
 
+/** First non-empty line of a (possibly huge) file, without loading it all. */
+async function firstNonEmptyLine(file) {
+  const rl = createInterface({ input: createReadStream(file, 'utf8'), crlfDelay: Infinity });
+  for await (const line of rl) {
+    if (line.trim()) return line;
+  }
+  return null;
+}
+
+// Guard against writing IG lines into a directory that already holds another
+// channel's dump: messages.jsonl is append-only, so mixing channels there
+// would silently corrupt the corpus (threads.mjs carries the mirror-image
+// warning for a mixed corpus that gets past this guard some other way).
+if (existsSync(MESSAGES_FILE)) {
+  const firstLine = await firstNonEmptyLine(MESSAGES_FILE);
+  let firstFrom = '';
+  if (firstLine) {
+    try { firstFrom = JSON.parse(firstLine)?.from ?? ''; } catch { /* unparseable: not this guard's call to make */ }
+  }
+  if (firstFrom && !String(firstFrom).endsWith('@ig')) {
+    console.error(`\n${MESSAGES_FILE} already exists and belongs to another channel (first line's "from" is "${firstFrom}", not an @ig id).`);
+    console.error('Set WA_OUT_DIR to a dedicated directory for this channel (e.g. WA_OUT_DIR=data/ig-history) and rerun.');
+    process.exit(1);
+  }
+}
+
 // Hard floor. Reading your own inbox at human pace is the whole risk posture.
 const THROTTLE_MS = 3000;
 const jitter = () => THROTTLE_MS + Math.floor(Math.random() * 2000);
@@ -52,7 +79,17 @@ const HEADERS = {
 
 let state = { done: [] };
 if (existsSync(STATE_FILE)) {
-  state = JSON.parse(await readFile(STATE_FILE, 'utf8'));
+  let parsed = null;
+  try { parsed = JSON.parse(await readFile(STATE_FILE, 'utf8')); } catch { /* handled below */ }
+  if (!parsed || !Array.isArray(parsed.done)) {
+    console.error(`\n${STATE_FILE} is corrupt or missing the expected "done" array — refusing to guess.`);
+    console.error('messages.jsonl is append-only, so silently resetting state here would re-walk threads');
+    console.error('already recorded in it and duplicate lines. Two ways out:');
+    console.error('  1. Restore ig-export-state.json from a backup, if you have one.');
+    console.error(`  2. Delete both ig-export-state.json and messages.jsonl in ${OUT_DIR} and re-export from scratch.`);
+    process.exit(1);
+  }
+  state = parsed;
   // A state file built under a narrower --since must never be resumed by a
   // broader run: threads already marked "done" were only walked back to the
   // OLD cutoff, so a broader rerun would silently skip the older messages in
@@ -74,14 +111,16 @@ if (existsSync(STATE_FILE)) {
 state.since_sec = SINCE_SEC;
 const saveState = () => writeFile(STATE_FILE, JSON.stringify(state, null, 2), 'utf8');
 
-/** Stop-dead: challenges are never retried into. */
+/** Stop-dead: a read-only exporter has nothing to gain from any non-OK
+ *  response, so ANY of them — not just the well-known challenge shapes —
+ *  takes the same save-state-and-explain path instead of a raw crash. */
 async function get(pathname) {
   await sleep(jitter());
   const res = await fetch(`${BASE}${pathname}`, { headers: HEADERS });
   const text = await res.text();
   let body = null;
   try { body = JSON.parse(text); } catch { /* HTML = login redirect */ }
-  const challenge = res.status === 401 || res.status === 429 || !body ||
+  const challenge = !res.ok || !body || body.status === 'fail' ||
     body.message === 'challenge_required' || body.message === 'login_required';
   if (challenge) {
     await saveState();
@@ -91,9 +130,13 @@ async function get(pathname) {
     console.error('  2. Wait a few hours. 3. Refresh IG_SESSION_ID/IG_DS_USER_ID from devtools. 4. Rerun.');
     process.exit(1);
   }
-  if (!res.ok) throw new Error(`IG HTTP ${res.status}: ${text.slice(0, 200)}`);
   return body;
 }
+
+/** item_type values the exporter knows how to shape into a NOWEB media
+ *  marker. Anything else still exports fine (as an empty text line, same as
+ *  an unrecognized type always has) but gets tallied so it's visible. */
+const MAPPED_TYPES = new Set(['text', 'link', 'media', 'voice_media', 'animated_media']);
 
 /** IG item → NOWEB-shape marker (same fallthrough idea as export-kapso). */
 function messageShape(item) {
@@ -138,12 +181,15 @@ for (;;) {
   if (!page.inbox?.has_older) break;
   cursor = page.inbox.oldest_cursor;
 }
-const groups = threads.filter((t) => t.is_group || (t.users?.length ?? 0) > 1);
-const oneToOne = threads.filter((t) => !groups.includes(t) && (t.users?.length ?? 0) === 1);
-console.log(`Inbox: ${threads.length} thread(s) · skipped ${groups.length} group thread(s)`);
+const oneToOne = threads.filter((t) => !t.is_group && (t.users?.length ?? 0) === 1);
+const skipped = threads.length - oneToOne.length;
+console.log(`Inbox: ${threads.length} thread(s) · skipped ${skipped} group thread(s)`);
 
 // 2) walk each 1:1 thread back in time; append per completed thread (resume unit)
 let total = 0;
+let anyFromMe = false;
+let unmappedCount = 0;
+const unmappedTypes = new Set();
 for (const t of oneToOne) {
   if (state.done.includes(t.thread_id)) continue;
   const counterpart = t.users[0];
@@ -157,8 +203,11 @@ for (const t of oneToOne) {
     let pastSince = false;
     for (const item of items) {
       const raw = toRawLine(item, counterpart);
-      if (raw) lines.push(JSON.stringify(raw));
-      else if (SINCE_SEC) pastSince = true; // items are newest→oldest
+      if (raw) {
+        lines.push(JSON.stringify(raw));
+        if (raw.fromMe) anyFromMe = true;
+        if (!MAPPED_TYPES.has(item.item_type)) { unmappedCount++; unmappedTypes.add(item.item_type); }
+      } else if (SINCE_SEC) pastSince = true; // items are newest→oldest
     }
     if (pastSince || !page.thread?.has_older || items.length === 0) break;
     tCursor = page.thread.oldest_cursor;
@@ -171,5 +220,11 @@ for (const t of oneToOne) {
 }
 
 console.log(`\n✓ ${total} messages → ${MESSAGES_FILE}`);
+if (unmappedCount > 0) {
+  console.log(`${unmappedCount} message(s) of unmapped type(s) (${[...unmappedTypes].join(', ')}) exported as empty text`);
+}
+if (total > 0 && !anyFromMe) {
+  console.log('\nWARNING: IG_DS_USER_ID matched no message — every line came out inbound. Check the ds_user_id cookie; a wrong value fabricates a 100% unanswered corpus.');
+}
 console.log('\nNext: node src/threads.mjs --session ig --no-net');
 console.log('Tip: keep IG corpora in their own dir (WA_OUT_DIR=data/ig-history) so channels never mix.');

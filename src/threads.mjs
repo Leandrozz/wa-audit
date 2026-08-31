@@ -233,7 +233,7 @@ if (noSender) warn(`${noSender} messages without a "from" field were left out of
 
 const lids = [...byJid.keys()].filter((j) => j.endsWith('@lid'));
 const cusJids = [...byJid.keys()].filter((j) => j.endsWith('@c.us'));
-const otherJids = [...byJid.keys()].filter((j) => !j.endsWith('@lid') && !j.endsWith('@c.us'));
+const otherJids = [...byJid.keys()].filter((j) => !j.endsWith('@lid') && !j.endsWith('@c.us') && !j.endsWith('@ig'));
 if (otherJids.length) warn(`${otherJids.length} JIDs with an unexpected suffix (e.g. ${otherJids[0]}); treated as raw numbers`);
 
 /** jid -> { pn, name } */
@@ -467,6 +467,12 @@ if (dupIds.length) warn(`duplicate thread_ids: ${dupIds.slice(0, 5).join(', ')}`
 // Channel: an all-@ig corpus is an Instagram export; anything else is WhatsApp.
 const igJids = [...byJid.keys()].filter((j) => j.endsWith('@ig')).length;
 const channel = igJids > 0 && igJids === byJid.size ? 'instagram' : 'whatsapp';
+// A corpus that mixes @ig with WhatsApp JIDs means two channels landed in the
+// same output dir (see export-ig.mjs's own guard against the reverse case).
+// Every metric above assumes one channel; flag it instead of shipping quietly.
+if (igJids > 0 && igJids !== byJid.size) {
+  warn('mixed WhatsApp+Instagram corpus: channels should be exported to separate output dirs (WA_OUT_DIR); metrics in this corpus are unreliable.');
+}
 
 // ---------------------------------------------------------- 7) outputs ---
 

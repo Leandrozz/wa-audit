@@ -11,10 +11,8 @@
  * Timestamps are MICROSECOND strings, like the real API.
  */
 import { createServer } from 'node:http';
-import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
 const portArg = process.argv[2];
 const PORT = (portArg && !portArg.startsWith('--')) ? Number(portArg) : 8439;
 const chAt = process.argv.indexOf('--challenge-after');
@@ -44,6 +42,7 @@ export function igFixture() {
       item(US.carlos.pk, 1756200300, 'text', { text: '¿Cuánto sale el envío a Rosario?' }),
       item(OWN_ID, 1756200200, 'text', { text: 'Buenas! Catálogo actualizado acá' }),
       item(OWN_ID, 1756200100, 'link', { link: { text: 'https://ejemplo.test/catalogo' } }),
+      item(US.carlos.pk, 1756200050, 'reel_share'), // unmapped type, no text field: exercises the tally (F6)
     ] },
     { thread_id: 'th_lucia', is_group: false, users: [US.lucia], items: [
       item(US.lucia.pk, 1756300100, 'text', { text: 'Precio del pack de 50 souvenirs?' }),
