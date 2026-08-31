@@ -20,7 +20,7 @@ const {
   porTipo, porMes, mesesOrdenados, primerIso, ultimoIso,
   hayResidual, mesInicioVentana, mesesVentana, mesesCalendario, mensajesResiduales,
   convsReales, numSistema, conCrm, sinResponder, idaYVuelta, conMedia,
-  medianaGlobal, top10, num, num1, pct,
+  medianaGlobal, top10, num, num1, pct, canal,
 } = D;
 
 const OUT = path.join(D.dir, path.basename(cfg.report.filename, path.extname(cfg.report.filename)) + '.html');
@@ -41,7 +41,7 @@ const html = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(BUSINESS)} — Informe de WhatsApp</title>
+<title>${esc(BUSINESS)} — Informe de ${canal}</title>
 <style>
   :root { --ink:#1c2733; --muted:#5b6b7b; --line:#e3e8ee; --accent:#1F3864; --bad:#b42318; --ok:#067647; --warn:#b54708; --bg:#f7f9fb; }
   * { box-sizing:border-box; }
@@ -86,7 +86,7 @@ const html = `<!doctype html>
 <div class="wrap">
 
 <header class="top">
-  <h1>${esc(BUSINESS)} — Historial de WhatsApp: informe maestro</h1>
+  <h1>${esc(BUSINESS)} — Historial de ${canal}: informe maestro</h1>
   <div class="sub">Generado el ${new Date().toISOString().slice(0, 10)} · sesión WAHA ${esc(summary.session)} · ${num(summary.lines_read)} mensajes crudos leídos</div>
 </header>
 

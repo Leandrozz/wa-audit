@@ -4,6 +4,7 @@
     "summary": {
       "schema_version": 1,
       "session": "fixture",
+      "channel": "whatsapp",
       "lines_read": 127,
       "group_messages_excluded": 5,
       "malformed_messages": 1,
@@ -79,6 +80,7 @@
     "summary": {
       "schema_version": 1,
       "session": "fixture",
+      "channel": "whatsapp",
       "lines_read": 126,
       "group_messages_excluded": 5,
       "malformed_messages": 0,

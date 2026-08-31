@@ -464,12 +464,16 @@ const dupIds = [];
 for (const t of threads) { if (ids.has(t.thread_id)) dupIds.push(t.thread_id); ids.add(t.thread_id); }
 if (dupIds.length) warn(`duplicate thread_ids: ${dupIds.slice(0, 5).join(', ')}`);
 
+// Channel: an all-@ig corpus is an Instagram export; anything else is WhatsApp.
+const igJids = [...byJid.keys()].filter((j) => j.endsWith('@ig')).length;
+const channel = igJids > 0 && igJids === byJid.size ? 'instagram' : 'whatsapp';
+
 // ---------------------------------------------------------- 7) outputs ---
 
 await mkdir(OUT_DIR, { recursive: true });
 await writeFile(
   THREADS_FILE,
-  JSON.stringify({ schema_version: 1, generated_at: new Date().toISOString(), session: SESSION || null, threads }, null, 2),
+  JSON.stringify({ schema_version: 1, generated_at: new Date().toISOString(), session: SESSION || null, channel, threads }, null, 2),
   'utf8',
 );
 
@@ -492,6 +496,7 @@ const summary = {
   generated_at: new Date().toISOString(),
   source: MESSAGES_FILE,
   session: SESSION || null,
+  channel,
   lines_read: linesRead,
   group_messages_excluded: groupExcluded,
   malformed_messages: malformed,

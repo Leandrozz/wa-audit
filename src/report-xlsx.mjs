@@ -69,7 +69,7 @@ const {
   porTipo, porMes, mesesOrdenados, primerIso, ultimoIso,
   hayResidual, mesInicioVentana, mesesVentana, mesesCalendario, mensajesResiduales,
   convsReales, numSistema, conCrm, sinResponder, idaYVuelta, conMedia, lidSinResolver,
-  medianaGlobal, top10, num, num1, pct,
+  medianaGlobal, top10, num, num1, pct, canal,
 } = loadReportData(cfg);
 
 // ------------------------------------------------------- writing helpers
@@ -111,7 +111,7 @@ const push = (fila, estilo) => {
   if (estilo) filasEstiloResumen[R.length] = estilo;
 };
 
-push([`${BUSINESS} — Historial de WhatsApp: informe maestro`], 3);
+push([`${BUSINESS} — Historial de ${canal}: informe maestro`], 3);
 push([`Generado el ${new Date().toISOString().slice(0, 10)} a partir del dump de la sesión WAHA ${summary.session}`]);
 push([]);
 if (hayResidual) {
@@ -338,7 +338,9 @@ pm([]);
 
 pm('1. DE DÓNDE SALEN LOS DATOS', 1);
 pm([
-  `El origen es un dump completo del historial de WhatsApp del negocio exportado desde WAHA, sesión ${summary.session}, ` +
+  (summary.channel === 'instagram'
+    ? `El origen es un export de la bandeja de DMs de Instagram del negocio, leído con la sesión del operador (solo lectura), sesión ${summary.session}, `
+    : `El origen es un dump completo del historial de WhatsApp del negocio exportado desde WAHA, sesión ${summary.session}, `) +
     `generado el ${String(summary.generated_at).slice(0, 10)}. Son ${num(summary.lines_read)} mensajes crudos en formato JSON, uno por línea. ` +
     `De ahí se derivó el corpus de trabajo (threads.json + messages.csv), que es lo que alimenta este Excel. ` +
     `El dump y el corpus quedan en el directorio de salida local, en la máquina que corrió el proceso; este generador no sube nada a ningún servicio externo. ` +

@@ -24,7 +24,7 @@ const {
   porTipo, porMes, mesesOrdenados, primerIso, ultimoIso,
   hayResidual, mesInicioVentana, mesesVentana, mesesCalendario, mensajesResiduales,
   convsReales, numSistema, sinResponder, idaYVuelta, conMedia,
-  medianaGlobal, top10, num, num1, pct,
+  medianaGlobal, top10, num, num1, pct, canal,
 } = D;
 
 const OUT = path.join(D.dir, path.basename(cfg.report.filename, path.extname(cfg.report.filename)) + '.docx');
@@ -82,7 +82,7 @@ const children = [];
 
 // ------------------------------------------------------------------- header
 children.push(new Paragraph({
-  children: [new TextRun({ text: clean(`${BUSINESS} — Historial de WhatsApp: informe maestro`), bold: true, size: 40, color: ACCENT })],
+  children: [new TextRun({ text: clean(`${BUSINESS} — Historial de ${canal}: informe maestro`), bold: true, size: 40, color: ACCENT })],
   spacing: { after: 60 },
 }));
 children.push(meta(`Generado el ${new Date().toISOString().slice(0, 10)} · sesión WAHA ${summary.session} · ${num(summary.lines_read)} mensajes crudos leídos`));
@@ -207,7 +207,7 @@ children.push(meta('Generado por wa-audit (src/report-docx.mjs). Todos los núme
 // ---------------------------------------------------------------- write out
 const doc = new Document({
   creator: 'wa-audit',
-  title: `${BUSINESS} — Informe de WhatsApp`,
+  title: `${BUSINESS} — Informe de ${canal}`,
   styles: {
     default: {
       document: { run: { font: 'Calibri', size: 21 } },

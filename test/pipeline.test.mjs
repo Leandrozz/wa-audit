@@ -11,6 +11,7 @@ test('direct lane: threads --no-net + report over the committed fixture', () => 
   const r = runDirectLane();
 
   assert.deepEqual(stableSummary(r.summary), golden.direct.summary);
+  assert.equal(r.summary.channel, 'whatsapp');
   assert.deepEqual(stableReport(r.report), golden.direct.report);
 
   // Contract v1 shape

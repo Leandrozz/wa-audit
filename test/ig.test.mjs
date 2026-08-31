@@ -125,6 +125,7 @@ test('IG lane: corpus keys @ig by user id — never as a phone number', async ()
   assert.equal(summary.count_check_ok, true);
   assert.equal(summary.threads, oneToOne.length);
   assert.equal(summary.lids_unresolved, 0, '@ig must never be mistaken for an unresolved @lid');
+  assert.equal(summary.channel, 'instagram');
 
   const corpus = JSON.parse(readFileSync(path.join(out, 'threads.json'), 'utf8'));
   for (const t of corpus.threads) {

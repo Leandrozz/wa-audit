@@ -38,6 +38,7 @@ export function loadReportData(cfg) {
     console.error('summary.json is not schema_version 1 — regenerate the corpus with src/threads.mjs.');
     process.exit(1);
   }
+  const canal = summary.channel === 'instagram' ? 'Instagram' : 'WhatsApp';
 
   let dimensiones = [];
   try {
@@ -145,7 +146,7 @@ export function loadReportData(cfg) {
 
   return {
     dir: DIR,
-    threads, summary, dimensiones,
+    threads, summary, dimensiones, canal,
     convs, totalMensajes, entrantes, salientes,
     porTipo, porMes, mesesOrdenados,
     primerIso, ultimoIso,
