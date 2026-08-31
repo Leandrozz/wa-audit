@@ -131,6 +131,7 @@ test('IG lane: corpus keys @ig by user id — never as a phone number', async ()
     assert.match(t.thread_id, /^ig:\d+$/, `IG thread key: ${t.thread_id}`);
     assert.equal(t.phone, null, 'an IG user id must NEVER normalize into a phone');
     assert.match(t.phone_display, /^IG:\d+$/);
+    assert.equal(t.unresolved_lid, false, 'an @ig thread must never be flagged as an unresolved @lid');
   }
   const maria = corpus.threads.find((t) => t.thread_id === 'ig:77000001');
   assert.equal(maria.contact_name, 'maria.deco', 'username flows in as contact_name via pushName');

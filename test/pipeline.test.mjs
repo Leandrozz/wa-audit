@@ -21,6 +21,15 @@ test('direct lane: threads --no-net + report over the committed fixture', () => 
   assert.equal(ana.crm.name, 'Ferretería La Tuerca');
   assert.equal(ana.messages[0].direction, 'inbound');
 
+  // Locks the unresolved_lid invariant (IG task 3, review round 1): status@broadcast
+  // has a null phone too (its local part "status" has no digits) but it is NOT an
+  // @lid. unresolved_lid must stay keyed off "was this an @lid that failed to
+  // resolve", not bare "phone is null" — else this system thread would silently
+  // stop being flagged in the exported report's "LID sin resolver" methodology text.
+  const broadcast = r.threads.threads.find((t) => t.thread_id === 'lid_status');
+  assert.ok(broadcast, 'status@broadcast system thread exists in the fixture');
+  assert.equal(broadcast.unresolved_lid, true, 'status@broadcast is not an @lid; must stay unresolved_lid=true');
+
   // Post-processing actually landed inside the ZIP: our styles + frozen panes.
   const cfb = CFB.read(readFileSync(r.xlsxPath), { type: 'buffer' });
   const styles = Buffer.from(CFB.find(cfb, '/xl/styles.xml').content).toString('utf8');
