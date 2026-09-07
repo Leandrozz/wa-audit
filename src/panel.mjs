@@ -20,6 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pipeline } from 'node:stream/promises';
+import { randomUUID } from 'node:crypto';
 import { loadConfig } from './lib/config.mjs';
 import { createAuditStore, listDimensions } from './lib/audits.mjs';
 import { createJobRunner, commandFor } from './lib/jobs.mjs';
@@ -39,7 +40,7 @@ const jobs = createJobRunner({ root: ROOT });
 const HOST_RE = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 const SESSION_RE = /^[A-Za-z0-9_-]+$/;
 const MAX_BODY = 1024 * 1024;
-const CSP = "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; form-action 'none'";
+const csp = (nonce) => `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'`;
 const MIME = {
   '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -113,8 +114,10 @@ const route = (method, re, handler) => routes.push({ method, re, handler });
 
 route('GET', /^\/$/, (req, res) => {
   if (!fs.existsSync(HTML)) throw new HttpError(404, 'src/panel.html is missing');
-  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': CSP, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store' });
-  res.end(fs.readFileSync(HTML));
+  const nonce = randomUUID();
+  const html = fs.readFileSync(HTML, 'utf8').replaceAll('__CSP_NONCE__', nonce);
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': csp(nonce), 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store' });
+  res.end(html);
 });
 
 route('GET', /^\/api\/audits$/, () => [200, store.list()]);
@@ -152,7 +155,7 @@ route('GET', /^\/api\/audits\/([^/]+)\/files\/([^/]+)$/, async (req, res, [slug,
     'X-Content-Type-Options': 'nosniff',
     'Cache-Control': 'no-store',
   });
-  await pipeline(fs.createReadStream(file), res).catch(() => res.destroy());
+  await pipeline(fs.createReadStream(file), res).catch((e) => { console.error(e); res.destroy(); });
 });
 
 route('POST', /^\/api\/audits\/([^/]+)\/run$/, async (req, res, [slug]) => {

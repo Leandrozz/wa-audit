@@ -527,3 +527,33 @@ test('panel HTTP: pipeline end to end (probe → export → threads → analyze 
     mock.kill();
   }
 });
+
+test('panel HTML: served with CSP, no innerHTML, only talks to /api', async () => {
+  const cwd = tmpDir();
+  const { child: panel, base } = await startPanel(cwd, scrubbedEnv({ WA_PANEL_DATA_DIR: path.join(cwd, 'data'), WA_PANEL_PORT: '0' }));
+  try {
+    const r = await fetch(base + '/');
+    assert.equal(r.status, 200);
+    assert.match(r.headers.get('content-type'), /text\/html/);
+    assert.match(r.headers.get('content-security-policy'), /frame-ancestors 'none'/);
+    const html = await r.text();
+    assert.match(html, /<html lang="es">/);
+    assert.ok(!/innerHTML|outerHTML|insertAdjacentHTML|document\.write/.test(html), 'DOM is built from text nodes only');
+    assert.ok(!/https?:\/\//.test(html.replace(/<!--[\s\S]*?-->/g, '')), 'no external resources');
+    for (const label of ['Estado', 'Fuente y WAHA', 'Pipeline', 'Contexto', 'Corpus', 'Hallazgos', 'Reportes', 'Config']) {
+      assert.ok(html.includes(label), `tab ${label}`);
+    }
+
+    const cspHeader = r.headers.get('content-security-policy');
+    const nonce = /script-src 'nonce-([0-9a-f-]{36})'/.exec(cspHeader)?.[1];
+    assert.ok(nonce, 'script-src carries a per-response nonce');
+    assert.ok(!/script-src[^;]*unsafe-inline/.test(cspHeader), 'no unsafe-inline for scripts');
+    assert.match(cspHeader, /base-uri 'none'/);
+    assert.ok(html.includes(`<script nonce="${nonce}">`), 'the served script tag carries the same nonce');
+    assert.ok(!html.includes('__CSP_NONCE__'), 'placeholder fully replaced');
+    const again = await fetch(base + '/');
+    assert.notEqual(again.headers.get('content-security-policy'), cspHeader, 'a fresh nonce per response');
+  } finally {
+    panel.kill();
+  }
+});

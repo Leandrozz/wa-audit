@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wa-audit · panel</title>
+<style>
+  :root { color-scheme: light dark; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { margin: 0; }
+  header { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; padding: .6rem 1rem; border-bottom: 1px solid #8884; }
+  header h1 { font-size: 1rem; margin: 0 .5rem 0 0; }
+  nav { display: flex; flex-wrap: wrap; gap: .25rem; padding: .5rem 1rem; border-bottom: 1px solid #8884; }
+  nav button[aria-selected="true"] { font-weight: bold; text-decoration: underline; }
+  main { padding: 1rem; max-width: 1100px; }
+  h2 { font-size: 1.15rem; } h3 { font-size: 1rem; } h4 { font-size: .95rem; margin-bottom: .2rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+  td, th { border-bottom: 1px solid #8883; padding: .3rem .5rem; text-align: left; vertical-align: top; }
+  tr.clickable { cursor: pointer; } tr.clickable:hover { background: #8882; }
+  pre.log { background: #111; color: #ddd; padding: .75rem; height: 22rem; overflow: auto; font-size: .8rem; white-space: pre-wrap; margin: 0; }
+  pre.log .err { color: #f99; }
+  .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .4rem 0; }
+  .ok { color: #2a7; } .miss { color: #a55; } .muted { opacity: .7; } .error { color: #c33; white-space: pre-wrap; }
+  .card { border: 1px solid #8884; border-radius: .5rem; padding: .75rem; margin: .6rem 0; }
+  .msg { padding: .25rem .5rem; margin: .15rem 0; border-radius: .4rem; max-width: 70%; white-space: pre-wrap; }
+  .msg.inbound { background: #8882; } .msg.outbound { background: #2a72; margin-left: auto; }
+  label.field { display: grid; gap: .2rem; margin: .4rem 0; }
+  textarea { min-height: 4rem; font: inherit; }
+  input, select, textarea { font: inherit; }
+  img.qr { image-rendering: pixelated; width: 260px; height: 260px; border: 1px solid #8884; display: block; }
+  q { font-style: italic; }
+</style>
+</head>
+<body>
+<header>
+  <h1>wa-audit</h1>
+  <label>Auditoría <select id="audit"></select></label>
+  <button id="new-audit">+ nueva auditoría</button>
+  <span id="job-badge" class="muted"></span>
+</header>
+<nav id="tabs" role="tablist"></nav>
+<main>
+  <p id="global-error" class="error" hidden></p>
+  <section id="tab-estado"></section>
+  <section id="tab-fuente"></section>
+  <section id="tab-pipeline"></section>
+  <section id="tab-contexto"></section>
+  <section id="tab-corpus"></section>
+  <section id="tab-hallazgos"></section>
+  <section id="tab-reportes"></section>
+  <section id="tab-config"></section>
+</main>
+<script nonce="__CSP_NONCE__">
+// ------------------------------------------------------------ plumbing ---
+const H = { 'content-type': 'application/json', 'x-wa-panel': '1' };
+async function api(method, path, body) {
+  const r = await fetch(path, { method, headers: method === 'GET' ? {} : H, body: body === undefined ? undefined : JSON.stringify(body) });
+  const ct = r.headers.get('content-type') || '';
+  const data = ct.includes('json') ? await r.json() : null;
+  if (!r.ok) throw new Error((data && data.error) || ('HTTP ' + r.status));
+  return data;
+}
+// Every node is built here; strings become text nodes, never markup.
+function el(tag, attrs = {}, ...children) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') n.className = v;
+    else if (k === 'on') for (const [ev, fn] of Object.entries(v)) n.addEventListener(ev, fn);
+    else if (k === 'value') n.value = v;
+    else if (v !== null && v !== undefined && v !== false) n.setAttribute(k, v === true ? '' : v);
+  }
+  for (const c of children.flat()) if (c !== null && c !== undefined && c !== false) n.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  return n;
+}
+const clear = (n) => { while (n.firstChild) n.removeChild(n.firstChild); return n; };
+const $ = (id) => document.getElementById(id);
+const showError = (e) => { const p = $('global-error'); p.textContent = e && e.message ? e.message : String(e); p.hidden = false; };
+const clearError = () => { $('global-error').hidden = true; };
+
+const TABS = [['estado', 'Estado'], ['fuente', 'Fuente y WAHA'], ['pipeline', 'Pipeline'], ['contexto', 'Contexto'], ['corpus', 'Corpus'], ['hallazgos', 'Hallazgos'], ['reportes', 'Reportes'], ['config', 'Config']];
+const STEP_LABEL = { context: 'completar el contexto de negocio', export: 'exportar el historial', threads: 'construir el corpus', analyze: 'correr el análisis', report: 'generar los reportes' };
+const STEP_TAB = { context: 'contexto', export: 'pipeline', threads: 'pipeline', analyze: 'pipeline', report: 'reportes' };
+let slug = localStorage.getItem('wa-panel.audit') || '';
+let tab = localStorage.getItem('wa-panel.tab') || 'estado';
+let es = null;        // EventSource of the live log
+let qrTimer = null;   // QR refresh interval
+
+// ------------------------------------------------------- audits + tabs ---
+async function loadAudits() {
+  const audits = await api('GET', '/api/audits');
+  const sel = clear($('audit'));
+  for (const a of audits) sel.append(el('option', { value: a.slug }, a.slug + ' · ' + a.business_name));
+  if (!audits.some((a) => a.slug === slug)) slug = audits[0] ? audits[0].slug : '';
+  sel.value = slug;
+  localStorage.setItem('wa-panel.audit', slug);
+  return audits;
+}
+$('audit').addEventListener('change', (e) => { slug = e.target.value; localStorage.setItem('wa-panel.audit', slug); render(); });
+$('new-audit').addEventListener('click', async () => {
+  const name = prompt('Nombre corto de la auditoría (minúsculas, números y guiones, ej. acme-2026):');
+  if (!name) return;
+  try { await api('POST', '/api/audits', { slug: name.trim() }); slug = name.trim(); await loadAudits(); render(); } catch (e) { showError(e); }
+});
+function buildTabs() {
+  const nav = clear($('tabs'));
+  for (const [id, label] of TABS) {
+    nav.append(el('button', { role: 'tab', 'aria-selected': String(id === tab), on: { click: () => { tab = id; localStorage.setItem('wa-panel.tab', id); render(); } } }, label));
+  }
+}
+async function render() {
+  clearError();
+  buildTabs();
+  if (qrTimer) { clearInterval(qrTimer); qrTimer = null; }
+  for (const [id] of TABS) $('tab-' + id).hidden = id !== tab;
+  const sec = clear($('tab-' + tab));
+  if (!slug) { sec.append(el('p', {}, 'No hay auditorías todavía. Creá una con "+ nueva auditoría".')); return; }
+  try { await RENDER[tab](sec); } catch (e) { sec.append(el('p', { class: 'error' }, e.message)); }
+}
+
+// --------------------------------------------------------------- estado ---
+async function renderEstado(sec) {
+  const st = await api('GET', '/api/audits/' + slug + '/status');
+  sec.append(el('h2', {}, 'Estado de "' + slug + '"'), el('p', { class: 'muted' }, st.dir));
+  sec.append(el('table', {}, el('tbody', {}, Object.entries(st.files).map(([f, ok]) =>
+    el('tr', {}, el('td', {}, f), el('td', { class: ok ? 'ok' : 'miss' }, ok ? 'presente' : 'falta'))))));
+  sec.append(el('p', {}, 'Próximo paso: ', el('strong', {}, STEP_LABEL[st.next_step]), ' ',
+    el('button', { on: { click: () => { tab = STEP_TAB[st.next_step]; render(); } } }, 'Ir')));
+  if (st.summary) {
+    const s = st.summary;
+    const keys = ['threads', 'two_way_threads', 'unanswered_threads', 'messages_included', 'inbound', 'outbound', 'global_median_response_min', 'lids_unresolved', 'crm_matches', 'internal_threads'];
+    sec.append(el('h3', {}, 'Resumen del corpus'), el('table', {}, el('tbody', {}, keys.map((k) => el('tr', {}, el('td', {}, k), el('td', {}, String(s[k])))))));
+    if (s.warnings && s.warnings.length) sec.append(el('h4', {}, 'Avisos'), el('ul', {}, s.warnings.map((w) => el('li', {}, w))));
+  }
+  sec.append(el('p', {}, 'Dimensiones analizadas: ' + (st.dimensions_done.length ? st.dimensions_done.join(', ') : 'ninguna')));
+}
+
+// --------------------------------------------------------------- fuente ---
+async function renderFuente(sec) {
+  const cfg = await api('GET', '/api/audits/' + slug + '/config');
+  const kind = el('select', {}, ['waha', 'kapso', 'ig'].map((k) => el('option', { value: k, selected: k === cfg.source.kind }, k)));
+  const session = el('input', { value: cfg.source.session });
+  sec.append(el('h2', {}, 'Fuente de datos'),
+    el('div', { class: 'row' }, el('label', {}, 'Tipo ', kind), el('label', {}, 'Sesión ', session),
+      el('button', { on: { click: async () => {
+        try { cfg.source = { kind: kind.value, session: session.value.trim() }; await api('PUT', '/api/audits/' + slug + '/config', cfg); render(); } catch (e) { showError(e); }
+      } } }, 'Guardar')),
+    el('p', { class: 'muted' }, 'WAHA: nombre de la sesión en la instancia. Kapso e Instagram: etiqueta libre del corpus (los scripts leen kapso.env / ig.env).'));
+
+  const envs = await api('GET', '/api/env');
+  sec.append(el('h3', {}, 'Archivos .env'),
+    el('p', { class: 'muted' }, 'Se cargan al arrancar el panel: reiniciá el panel después de editarlos. Solo se muestran los nombres de las claves.'),
+    el('table', {}, el('tbody', {}, envs.map((e) => el('tr', {}, el('td', {}, e.file),
+      el('td', { class: e.exists ? 'ok' : 'miss' }, e.exists ? 'presente · claves: ' + (e.keys.join(', ') || '(ninguna)') : 'no existe'))))));
+
+  if (cfg.source.kind !== 'waha') return;
+  const box = el('div', { class: 'card' });
+  sec.append(el('h3', {}, 'WAHA'), box);
+  const showQr = (name) => {
+    if (qrTimer) clearInterval(qrTimer);
+    let img = box.querySelector('img.qr');
+    if (!img) {
+      img = el('img', { class: 'qr', alt: 'QR de vinculación' });
+      box.append(el('p', {}, 'Escaneá desde el teléfono del negocio: WhatsApp → Dispositivos vinculados → Vincular un dispositivo. El QR rota; se refresca solo cada 20 s.'), img);
+    }
+    const tick = async () => {
+      img.src = '/api/waha/qr/' + encodeURIComponent(name) + '?t=' + Date.now();
+      try {
+        const s = (await api('GET', '/api/waha/sessions')).find((x) => x.name === name);
+        if (s && s.status === 'WORKING') { clearInterval(qrTimer); qrTimer = null; await refresh(); box.append(el('p', { class: 'ok' }, 'Sesión "' + name + '" en WORKING: ya podés correr el probe.')); }
+      } catch (e) { /* the sessions table shows the state on the next refresh */ }
+    };
+    tick();
+    qrTimer = setInterval(tick, 20000);
+  };
+  const refresh = async () => {
+    clear(box);
+    try {
+      const sessions = await api('GET', '/api/waha/sessions');
+      box.append(el('table', {}, el('tbody', {}, sessions.map((s) => el('tr', {}, el('td', {}, s.name), el('td', {}, s.status), el('td', {}, s.engine || ''))))));
+      if (!sessions.length) box.append(el('p', {}, 'Sin sesiones.'));
+    } catch (e) {
+      box.append(el('p', { class: 'error' }, 'WAHA no responde: ' + e.message));
+    }
+    const name = el('input', { value: cfg.source.session, placeholder: 'nombre de sesión' });
+    box.append(el('div', { class: 'row' }, name,
+      el('button', { on: { click: async () => { try { await api('POST', '/api/waha/sessions', { name: name.value.trim() }); await refresh(); showQr(name.value.trim()); } catch (e) { showError(e); } } } }, 'Crear sesión (fullSync)'),
+      el('button', { on: { click: () => showQr(name.value.trim()) } }, 'Mostrar QR'),
+      el('button', { on: { click: refresh } }, 'Actualizar')));
+    box.append(el('p', { class: 'muted' }, 'Creá la sesión con fullSync ANTES de vincular el teléfono: activarlo después no trae el historial. La sesión ocupa un lugar de "dispositivo vinculado"; liberalo después de exportar. El historial completo necesita motor NOWEB o GOWS (el probe lo verifica).'));
+  };
+  await refresh();
+}
+
+// ------------------------------------------------------------- pipeline ---
+async function renderPipeline(sec) {
+  const cfg = await api('GET', '/api/audits/' + slug + '/config');
+  const dims = await api('GET', '/api/dimensions');
+  const kind = cfg.source.kind;
+  sec.append(el('h2', {}, 'Pipeline · fuente ' + kind + ' · sesión ' + cfg.source.session));
+  const runBtn = (step, options, label) => el('button', { on: { click: () => runStep(step, typeof options === 'function' ? options() : options) } }, label || 'Correr');
+  const rows = el('div');
+  if (kind === 'waha') rows.append(el('div', { class: 'row card' }, el('strong', {}, '0. Probe'), el('span', { class: 'muted' }, 'solo lectura: motor, sesión, profundidad del historial'), runBtn('probe', {})));
+  const since = el('input', { type: 'number', min: '1', placeholder: 'días (opcional)' });
+  rows.append(el('div', { class: 'row card' }, el('strong', {}, '2. Export'),
+    el('span', { class: 'muted' }, kind === 'waha' ? 'volcado crudo, reanudable' : kind === 'kapso' ? 'API oficial vía Kapso (kapso.env)' : 'DMs de Instagram (cookie en ig.env)'),
+    kind === 'ig' ? el('label', {}, '--since ', since) : null,
+    runBtn('export', () => (kind === 'ig' && since.value ? { since: Number(since.value) } : {}))));
+  const noNet = el('input', { type: 'checkbox' });
+  rows.append(el('div', { class: 'row card' }, el('strong', {}, '3. Corpus'), el('span', { class: 'muted' }, 'threads.json + summary.json + messages.csv'),
+    kind === 'waha' ? el('label', {}, noNet, ' --no-net (no resolver @lid contra WAHA)') : el('span', { class: 'muted' }, '--no-net forzado'),
+    runBtn('threads', () => ({ noNet: noNet.checked }))));
+  const checks = dims.map((d) => { const c = el('input', { type: 'checkbox', value: d.key }); return { key: d.key, c, label: el('label', {}, c, ' ' + d.key + ' · ' + d.title) }; });
+  const setAll = (pred) => { for (const x of checks) x.c.checked = pred(x.key); };
+  rows.append(el('div', { class: 'card' },
+    el('div', { class: 'row' }, el('strong', {}, '4. Análisis'), el('span', { class: 'muted' }, 'LLM + verificación obligatoria (proveedor en Config; sin selección = todas)'),
+      el('button', { on: { click: () => setAll(() => true) } }, 'Todas'),
+      el('button', { on: { click: () => setAll((k) => !k.startsWith('fate_')) } }, 'Comerciales'),
+      el('button', { on: { click: () => setAll((k) => k.startsWith('fate_')) } }, 'Set FATE'),
+      el('button', { on: { click: () => setAll(() => false) } }, 'Ninguna'),
+      runBtn('analyze', () => ({ dimensions: checks.filter((x) => x.c.checked).map((x) => x.key) }))),
+    el('div', {}, checks.map((x) => el('div', {}, x.label)))));
+  rows.append(el('div', { class: 'row card' }, el('strong', {}, '5. Reportes'), runBtn('report-xlsx', {}, 'XLSX'), runBtn('report-html', {}, 'HTML'), runBtn('report-docx', {}, 'DOCX')));
+  sec.append(rows);
+  sec.append(el('h3', {}, 'Log'), el('div', { class: 'row' }, el('button', { on: { click: cancelJob } }, 'Cancelar'), el('span', { id: 'job-state', class: 'muted' })), el('pre', { class: 'log', id: 'log' }));
+  attachLog();
+}
+async function runStep(step, options) {
+  clearError();
+  try { await api('POST', '/api/audits/' + slug + '/run', { step, options: options || {} }); } catch (e) { showError(e); return; }
+  if (tab !== 'pipeline') { tab = 'pipeline'; await render(); } else attachLog();
+}
+async function cancelJob() {
+  try { await api('POST', '/api/jobs/cancel'); } catch (e) { showError(e); }
+}
+function attachLog() {
+  const log = $('log');
+  if (!log) return;
+  if (es) { es.close(); es = null; }
+  clear(log);
+  const state = $('job-state');
+  if (state) state.textContent = 'conectando…';
+  es = new EventSource('/api/jobs/stream');
+  es.onmessage = (ev) => {
+    const { s, t } = JSON.parse(ev.data);
+    log.append(el('span', { class: s === 'err' ? 'err' : '' }, t + '\n'));
+    log.scrollTop = log.scrollHeight;
+    if (state) state.textContent = 'corriendo…';
+  };
+  es.addEventListener('end', async (ev) => {
+    es.close(); es = null;
+    const { exit_code } = JSON.parse(ev.data);
+    if (state) {
+      if (exit_code === 0) state.textContent = 'terminó OK';
+      else if (exit_code !== null) state.textContent = 'terminó con exit ' + exit_code;
+      else {
+        try {
+          const j = await api('GET', '/api/jobs/current');
+          state.textContent = j ? 'cancelado (el proceso terminó sin código de salida)' : 'sin jobs todavía';
+        } catch (e) { state.textContent = 'sin jobs todavía'; }
+      }
+    }
+    updateBadge();
+  });
+  es.onerror = () => { if (es) { es.close(); es = null; } };
+  updateBadge();
+}
+async function updateBadge() {
+  try {
+    const j = await api('GET', '/api/jobs/current');
+    $('job-badge').textContent = !j ? '' : j.running ? '⏳ ' + j.step + ' en ' + j.slug : 'último job: ' + j.step + ' (' + (j.exit_code === 0 ? 'OK' : 'exit ' + j.exit_code) + ')';
+  } catch (e) { /* badge is best-effort */ }
+}
+
+// ------------------------------------------------------------- contexto ---
+const CONTEXT_FIELDS = [['what_we_sell', '¿Qué venden?'], ['who_buys', '¿Quién compra?'], ['sales_process', 'Proceso de venta'], ['team_on_this_number', '¿Quién atiende este número?'], ['goals', 'Objetivos'], ['known_problems', 'Problemas conocidos'], ['tone_intent', 'Tono buscado']];
+async function renderContexto(sec) {
+  const ctx = await api('GET', '/api/audits/' + slug + '/business-context');
+  sec.append(el('h2', {}, 'Contexto de negocio (entrevista al operador)'),
+    el('p', { class: 'muted' }, 'El análisis y el verificador lo reciben. Las claves extra que ya existan en el archivo se conservan.'));
+  const inputs = CONTEXT_FIELDS.map(([k, label]) => {
+    const v = ctx[k];
+    const ta = el('textarea', { value: v === undefined ? '' : typeof v === 'string' ? v : JSON.stringify(v) });
+    sec.append(el('label', { class: 'field' }, label, ta));
+    return [k, ta];
+  });
+  sec.append(el('button', { on: { click: async () => {
+    try {
+      const out = { ...ctx };
+      for (const [k, ta] of inputs) { if (ta.value.trim()) out[k] = ta.value; else delete out[k]; }
+      await api('PUT', '/api/audits/' + slug + '/business-context', out);
+      render();
+    } catch (e) { showError(e); }
+  } } }, 'Guardar'));
+}
+
+// --------------------------------------------------------------- corpus ---
+async function renderCorpus(sec, offset = 0) {
+  const page = await api('GET', '/api/audits/' + slug + '/threads?offset=' + offset + '&limit=20');
+  sec.append(el('h2', {}, 'Corpus · ' + page.total + ' hilos'));
+  const detail = el('div', { class: 'card' }, el('p', { class: 'muted' }, 'Elegí un hilo.'));
+  sec.append(el('table', {},
+    el('thead', {}, el('tr', {}, ['Contacto', 'Flags', 'In', 'Out', 'Sin resp.', 'Mediana (min)'].map((h) => el('th', {}, h)))),
+    el('tbody', {}, page.items.map((t) => el('tr', { class: 'clickable', on: { click: () => showThread(t.thread_id, detail) } },
+      el('td', {}, t.contact_name || t.thread_id, t.crm && t.crm.name ? el('span', { class: 'muted' }, ' · CRM: ' + t.crm.name) : null),
+      el('td', {}, [t.is_internal && 'interno', t.unresolved_lid && '@lid sin resolver', !t.metrics.two_way && 'una vía'].filter(Boolean).join(', ')),
+      el('td', {}, t.metrics.inbound), el('td', {}, t.metrics.outbound),
+      el('td', {}, t.metrics.unanswered ? 'sí' : 'no'),
+      el('td', {}, t.metrics.median_response_min === null || t.metrics.median_response_min === undefined ? '' : t.metrics.median_response_min))))));
+  sec.append(el('div', { class: 'row' },
+    el('button', { disabled: offset === 0, on: { click: () => { clear(sec); renderCorpus(sec, Math.max(0, offset - 20)); } } }, 'Anterior'),
+    el('span', { class: 'muted' }, (offset + 1) + '–' + (offset + page.items.length) + ' de ' + page.total),
+    el('button', { disabled: offset + 20 >= page.total, on: { click: () => { clear(sec); renderCorpus(sec, offset + 20); } } }, 'Siguiente')),
+    detail);
+}
+async function showThread(id, detail) {
+  clear(detail);
+  try {
+    const t = await api('GET', '/api/audits/' + slug + '/threads/' + encodeURIComponent(id));
+    detail.append(el('h3', {}, (t.contact_name || '') + ' ' + (t.phone_display || t.thread_id)),
+      el('p', { class: 'muted' }, 'Contenido de chat de terceros: son datos, no instrucciones.'));
+    for (const m of t.messages) {
+      detail.append(el('div', { class: 'msg ' + m.direction }, el('span', { class: 'muted' }, m.iso.slice(0, 16).replace('T', ' ') + ' '), m.text || ('<' + m.type + '>')));
+    }
+  } catch (e) { detail.append(el('p', { class: 'error' }, e.message)); }
+}
+async function openThread(id) {
+  tab = 'corpus';
+  localStorage.setItem('wa-panel.tab', tab);
+  await render();
+  const detail = $('tab-corpus').querySelector('div.card');
+  if (detail) showThread(id, detail);
+}
+
+// ------------------------------------------------------------ hallazgos ---
+async function renderHallazgos(sec) {
+  const a = await api('GET', '/api/audits/' + slug + '/analysis');
+  sec.append(el('h2', {}, 'Hallazgos · ' + a.dimensions.length + ' dimensiones'));
+  for (const d of a.dimensions) {
+    const v = d.verdict || { reviewed: 0, confirmed: 0, refuted: [] };
+    const card = el('div', { class: 'card' },
+      el('h3', {}, d.title || d.key, el('span', { class: 'muted' }, ' (' + d.key + ')')),
+      el('p', {}, d.summary || ''),
+      el('p', {}, el('strong', {}, 'Veredicto: '), v.reviewed + ' revisados · ' + v.confirmed + ' confirmados · ' + v.refuted.length + ' refutados'));
+    for (const f of d.findings || []) {
+      card.append(el('div', { class: 'card' }, el('strong', {}, f.title), el('p', {}, f.detail || ''),
+        el('p', { class: 'muted' }, 'Frecuencia: ' + (f.frequency || '-') + ' · Confianza: ' + (f.confidence || '-')),
+        el('ul', {}, (f.evidence || []).map((e) => el('li', {}, el('button', { on: { click: () => openThread(String(e.thread_id)) } }, String(e.thread_id)), ' ', el('q', {}, e.quote))))));
+    }
+    if (v.refuted.length) {
+      card.append(el('h4', {}, 'Refutados por la verificación'), el('ul', {}, v.refuted.map((r) =>
+        el('li', {}, el('strong', {}, r.title), ': ' + r.reason, r.correction ? el('span', { class: 'muted' }, ' · ' + r.correction) : null))));
+    }
+    if (d.limitations && d.limitations.length) card.append(el('p', { class: 'muted' }, 'Limitaciones: ' + d.limitations.join(' · ')));
+    sec.append(card);
+  }
+}
+
+// ------------------------------------------------------------- reportes ---
+async function renderReportes(sec) {
+  const st = await api('GET', '/api/audits/' + slug + '/status');
+  const cfg = await api('GET', '/api/audits/' + slug + '/config');
+  const base = cfg.report.filename.replace(/\.[^.]+$/, '');
+  sec.append(el('h2', {}, 'Reportes'));
+  const rows = [['report-xlsx', cfg.report.filename, 'XLSX (planilla del cliente)'], ['report-html', base + '.html', 'HTML (archivo único)'], ['report-docx', base + '.docx', 'DOCX (Word)']];
+  sec.append(el('table', {}, el('tbody', {}, rows.map(([step, file, label]) => el('tr', {},
+    el('td', {}, label),
+    el('td', { class: st.files[file] ? 'ok' : 'miss' }, st.files[file] ? 'generado' : 'no generado'),
+    el('td', {}, el('button', { on: { click: () => runStep(step, {}) } }, 'Generar'), ' ',
+      st.files[file] ? el('a', { href: '/api/audits/' + slug + '/files/' + encodeURIComponent(file) }, 'Descargar') : null))))));
+  sec.append(el('h3', {}, 'Datos'), el('ul', {}, ['threads.json', 'summary.json', 'analysis.json', 'messages.csv'].map((f) =>
+    el('li', {}, st.files[f] ? el('a', { href: '/api/audits/' + slug + '/files/' + f }, f) : el('span', { class: 'muted' }, f + ' (falta)')))));
+  if (st.next_step !== 'report') sec.append(el('p', { class: 'muted' }, 'Antes hay que ' + STEP_LABEL[st.next_step] + '.'));
+}
+
+// --------------------------------------------------------------- config ---
+const CONFIG_FIELDS = [
+  ['business.name', 'Nombre del negocio (aparece en el reporte)', 'text'],
+  ['business.internalNumbers', 'Números internos, separados por coma (se excluyen de las métricas de clientes)', 'list'],
+  ['business.internalEmailDomains', 'Dominios de email internos, separados por coma', 'list'],
+  ['phone.defaultCountry', 'País por defecto para números del CRM sin prefijo (ISO-3166, ej. AR)', 'text'],
+  ['timezone.utcOffset', 'Offset UTC (ej. -03:00)', 'text'],
+  ['locale', 'Locale del reporte (ej. es-AR)', 'text'],
+  ['report.filename', 'Nombre del XLSX (los otros formatos usan la misma base)', 'text'],
+  ['crm.file', 'CSV del CRM (ruta en esta máquina; vacío = sin CRM)', 'nullable'],
+  ['llm.provider', 'Proveedor LLM', ['anthropic', 'openai', 'mock']],
+  ['llm.model', 'Modelo (vacío = default del proveedor; openai lo exige)', 'nullable'],
+  ['llm.baseUrl', 'Base URL (endpoints compatibles con OpenAI; vacío = default)', 'nullable'],
+  ['llm.maxTokens', 'Max tokens de salida', 'number'],
+  ['llm.cannedDir', 'Directorio de respuestas enlatadas (solo proveedor mock)', 'nullable'],
+  ['analysis.language', 'Idioma en que escribe el análisis', 'text'],
+  ['analysis.maxCorpusChars', 'Presupuesto de caracteres del corpus', 'number'],
+  ['source.kind', 'Fuente', ['waha', 'kapso', 'ig']],
+  ['source.session', 'Sesión', 'text'],
+];
+const getPath = (o, p) => p.split('.').reduce((a, k) => (a === null || a === undefined ? undefined : a[k]), o);
+const setPath = (o, p, v) => { const ks = p.split('.'); let cur = o; for (const k of ks.slice(0, -1)) { if (!cur[k]) cur[k] = {}; cur = cur[k]; } cur[ks[ks.length - 1]] = v; };
+async function renderConfig(sec) {
+  const cfg = await api('GET', '/api/audits/' + slug + '/config');
+  sec.append(el('h2', {}, 'Configuración de la auditoría'),
+    el('p', { class: 'muted' }, 'Archivo: data/' + slug + '/wa-audit.config.json. Las claves de API van en los archivos .env, nunca acá.'));
+  const inputs = CONFIG_FIELDS.map(([p, label, kind]) => {
+    const v = getPath(cfg, p);
+    let input;
+    if (Array.isArray(kind)) input = el('select', {}, kind.map((o) => el('option', { value: o, selected: o === v }, o)));
+    else if (kind === 'list') input = el('input', { value: (v || []).join(', ') });
+    else if (kind === 'number') input = el('input', { type: 'number', value: v === null || v === undefined ? '' : v });
+    else input = el('input', { value: v === null || v === undefined ? '' : v });
+    sec.append(el('label', { class: 'field' }, label, input));
+    return [p, kind, input];
+  });
+  const msg = el('p', { class: 'error' });
+  sec.append(el('button', { on: { click: async () => {
+    const out = structuredClone(cfg);
+    for (const [p, kind, input] of inputs) {
+      const raw = input.value.trim();
+      setPath(out, p, kind === 'list' ? raw.split(',').map((s) => s.trim()).filter(Boolean) : kind === 'number' ? Number(raw) : kind === 'nullable' ? (raw || null) : raw);
+    }
+    try { await api('PUT', '/api/audits/' + slug + '/config', out); msg.className = 'ok'; msg.textContent = 'Guardado.'; } catch (e) { msg.className = 'error'; msg.textContent = e.message; }
+  } } }, 'Guardar'), msg);
+}
+
+// ----------------------------------------------------------------- boot ---
+const RENDER = { estado: renderEstado, fuente: renderFuente, pipeline: renderPipeline, contexto: renderContexto, corpus: renderCorpus, hallazgos: renderHallazgos, reportes: renderReportes, config: renderConfig };
+(async () => {
+  try { await loadAudits(); await render(); updateBadge(); setInterval(updateBadge, 5000); } catch (e) { showError(e); }
+})();
+</script>
+</body>
+</html>
