@@ -170,6 +170,17 @@ verdict, every evidence quote is re-checked server-side against the corpus,
 and chat content is served as untrusted data. It never sends a WhatsApp
 message. Setup: [docs/mcp-setup.md](docs/mcp-setup.md).
 
+## Or manage everything from a local web panel
+
+`npm run panel` starts a local panel at http://127.0.0.1:8480 (loopback
+only, no login): several audits side by side (one folder per client
+under `data/`), source selection (WAHA / Kapso / Instagram), the WAHA
+pairing QR on screen, every pipeline phase with live logs, the corpus and
+the verified findings as read-only views, per-audit configuration, and
+the three reports as downloads. Zero new dependencies: `node:http` and
+one HTML file. Secrets stay in the `.env` files. Details and the security
+posture: [docs/panel.md](docs/panel.md).
+
 ## The pipeline
 
 ```

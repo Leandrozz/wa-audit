@@ -167,6 +167,17 @@ server contra el corpus, y el contenido de los chats se sirve como dato no
 confiable. Nunca envía mensajes de WhatsApp. Setup:
 [docs/mcp-setup.md](docs/mcp-setup.md).
 
+## O manejá todo desde un panel web local
+
+`npm run panel` levanta un panel en http://127.0.0.1:8480 (solo loopback,
+sin login): varias auditorías a la vez (una carpeta por cliente en
+`data/`), elección de fuente (WAHA / Kapso / Instagram), el QR de WAHA en
+pantalla, cada fase del pipeline con logs en vivo, el corpus y los
+hallazgos verificados como vistas de solo lectura, configuración por
+auditoría y los tres reportes para descargar. Cero dependencias nuevas:
+`node:http` y un HTML. Los secretos siguen en los archivos `.env`.
+Detalles y postura de seguridad: [docs/panel.md](docs/panel.md).
+
 ## Configuración, contrato de datos y límites
 
 - Configuración: [`wa-audit.config.json`](wa-audit.config.json) + overrides

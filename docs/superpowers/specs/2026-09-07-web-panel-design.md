@@ -160,16 +160,20 @@ export is resumable).
 - Env endpoint returns key names only. The QR proxy returns bytes; the API
   key never leaves the server.
 - Response headers on `/`: `Content-Security-Policy: default-src 'none';
-  script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src
+  script-src 'nonce-<per-response nonce>'; style-src 'unsafe-inline'; img-src
   'self' data:; connect-src 'self'; frame-ancestors 'none'; form-action
-  'none'`, plus `X-Content-Type-Options: nosniff`.
+  'none'; base-uri 'none'`, plus `X-Content-Type-Options: nosniff`. The
+  server generates the nonce with `crypto.randomUUID()` per response and
+  stamps it on the page's single inline `<script>` (ruled during review:
+  the page renders third-party chat content, so `'unsafe-inline'` for
+  scripts was replaced by a nonce).
 - Chat content and every server string reach the DOM through `textContent`,
   never `innerHTML`.
 
 ## 3. UI (`src/panel.html`)
 
 One file, inline CSS + JS, no dependencies. A top bar with the audit
-selector (+ "nueva auditoría"); the selected slug is remembered in
+selector and an inline "nueva auditoría" input + "Crear" button (no native dialogs, which embedded browsers may not support); the selected slug is remembered in
 `localStorage`. Tabs:
 
 1. **Estado**: files present, `next_step`, the `summary.json` numbers,
