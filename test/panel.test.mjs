@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { ROOT, tmpDir } from './harness.mjs';
+import { ROOT, tmpDir, startMock } from './harness.mjs';
 import { resolveConfig, DEFAULTS } from '../src/lib/config.mjs';
+import { listSessions, createSession, qrPng, WahaError, wahaBase } from '../src/lib/waha.mjs';
 
 /** process.env with every WA_/WAHA_/KAPSO_/IG_ key removed (the panel tests
  *  must not inherit the developer's shell), plus explicit extras. */
@@ -67,4 +68,27 @@ test('loadConfig honors WA_CONFIG_FILE and refuses a missing one', () => {
   const missing = run(path.join(dir, 'does-not-exist.json'));
   assert.equal(missing.status, 1);
   assert.match(missing.stderr, /WA_CONFIG_FILE/);
+});
+
+test('waha lib: sessions, create, qr against the mock', async () => {
+  const saved = { url: process.env.WAHA_BASE_URL, key: process.env.WAHA_API_KEY };
+  delete process.env.WAHA_BASE_URL;
+  assert.equal(wahaBase(), '');
+  await assert.rejects(listSessions(), (e) => e instanceof WahaError && e.status === 0);
+
+  const mock = await startMock(8441);
+  process.env.WAHA_BASE_URL = 'http://localhost:8441/';
+  process.env.WAHA_API_KEY = 'test';
+  try {
+    assert.equal(wahaBase(), 'http://localhost:8441');
+    const sessions = await listSessions();
+    assert.deepEqual(sessions, [{ name: 'fixture', status: 'WORKING', engine: 'NOWEB' }]);
+    assert.match(await createSession('audit'), /SCAN_QR_CODE/);
+    const png = await qrPng('fixture');
+    assert.equal(png.subarray(1, 4).toString(), 'PNG');
+  } finally {
+    mock.kill();
+    if (saved.url === undefined) delete process.env.WAHA_BASE_URL; else process.env.WAHA_BASE_URL = saved.url;
+    if (saved.key === undefined) delete process.env.WAHA_API_KEY; else process.env.WAHA_API_KEY = saved.key;
+  }
 });

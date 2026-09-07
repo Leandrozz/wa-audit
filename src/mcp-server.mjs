@@ -29,17 +29,12 @@ import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import { loadConfig } from './lib/config.mjs';
 import { verifyQuote } from './lib/quotes.mjs';
+import { wahaBase, listSessions, createSession, qrPng, WahaError } from './lib/waha.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PROMPTS_DIR = path.join(ROOT, 'analysis', 'prompts');
 const cfg = loadConfig();
 const OUT_DIR = path.isAbsolute(cfg.output.dir) ? cfg.output.dir : path.join(process.cwd(), cfg.output.dir);
-
-const BASE = (process.env.WAHA_BASE_URL ?? '').replace(/\/+$/, '');
-const HEADERS = { 'X-Api-Key': process.env.WAHA_API_KEY ?? '', Accept: 'application/json' };
-if (process.env.WAHA_BASIC_AUTH) {
-  HEADERS.Authorization = `Basic ${Buffer.from(process.env.WAHA_BASIC_AUTH, 'utf8').toString('base64')}`;
-}
 
 // ---------------------------------------------------------------- helpers ---
 
@@ -119,14 +114,11 @@ server.registerTool('status', {
   inputSchema: {},
 }, async () => {
   let waha = 'not configured (WAHA_BASE_URL is empty)';
-  if (BASE) {
+  if (wahaBase()) {
     try {
-      const r = await fetch(`${BASE}/api/sessions?all=true`, { headers: HEADERS, signal: AbortSignal.timeout(8000) });
-      waha = r.ok
-        ? `reachable — sessions: ${JSON.stringify((await r.json()).map((s) => ({ name: s.name, status: s.status, engine: s.engine?.engine ?? s.engine })))}`
-        : `HTTP ${r.status} from ${BASE}`;
+      waha = `reachable — sessions: ${JSON.stringify(await listSessions())}`;
     } catch (e) {
-      waha = `unreachable (${String(e).slice(0, 80)})`;
+      waha = e instanceof WahaError && e.status ? `HTTP ${e.status} from ${wahaBase()}` : `unreachable (${String(e).slice(0, 80)})`;
     }
   }
   const files = ['business-context.json', 'messages.jsonl', 'threads.json', 'summary.json', 'analysis.json']
@@ -167,20 +159,12 @@ server.registerTool('waha_create_session', {
   description: 'Create a WAHA session with noweb.store.fullSync enabled (must happen BEFORE linking the phone, or history depth is ~3 months).',
   inputSchema: { name: z.string().regex(/^[A-Za-z0-9_-]+$/).describe('session name, e.g. "audit"') },
 }, async ({ name }) => {
-  if (!BASE) return errorResult('WAHA_BASE_URL is not configured.');
+  if (!wahaBase()) return errorResult('WAHA_BASE_URL is not configured.');
   try {
-    const r = await fetch(`${BASE}/api/sessions`, {
-      method: 'POST',
-      headers: { ...HEADERS, 'content-type': 'application/json' },
-      signal: AbortSignal.timeout(30000),
-      body: JSON.stringify({ name, start: true, config: { noweb: { store: { enabled: true, fullSync: true } } } }),
-    });
-    const body = (await r.text()).slice(0, 500);
-    return r.ok
-      ? text(`Session "${name}" created with fullSync enabled. Next: waha_qr to link the phone.\n${body}`)
-      : errorResult(`WAHA answered HTTP ${r.status}: ${body}`);
+    const body = await createSession(name);
+    return text(`Session "${name}" created with fullSync enabled. Next: waha_qr to link the phone.\n${body}`);
   } catch (e) {
-    return errorResult(`Could not reach WAHA: ${String(e).slice(0, 200)}`);
+    return errorResult(e instanceof WahaError ? e.message : `Could not reach WAHA: ${String(e).slice(0, 200)}`);
   }
 });
 
@@ -188,14 +172,9 @@ server.registerTool('waha_qr', {
   description: 'Fetch the pairing QR for a WAHA session as an image — show it to the user so they scan it from the business phone (WhatsApp → Linked devices).',
   inputSchema: { session: z.string() },
 }, async ({ session }) => {
-  if (!BASE) return errorResult('WAHA_BASE_URL is not configured.');
+  if (!wahaBase()) return errorResult('WAHA_BASE_URL is not configured.');
   try {
-    const r = await fetch(`${BASE}/api/${encodeURIComponent(session)}/auth/qr?format=image`, {
-      headers: { ...HEADERS, Accept: 'image/png' },
-      signal: AbortSignal.timeout(15000),
-    });
-    if (!r.ok) return errorResult(`WAHA answered HTTP ${r.status}: ${(await r.text()).slice(0, 300)} (a WORKING session has no QR — check status)`);
-    const data = Buffer.from(await r.arrayBuffer()).toString('base64');
+    const data = (await qrPng(session)).toString('base64');
     return {
       content: [
         { type: 'image', data, mimeType: 'image/png' },
@@ -203,7 +182,7 @@ server.registerTool('waha_qr', {
       ],
     };
   } catch (e) {
-    return errorResult(`Could not fetch QR: ${String(e).slice(0, 200)}`);
+    return errorResult(e instanceof WahaError ? e.message : `Could not fetch QR: ${String(e).slice(0, 200)}`);
   }
 });
 
@@ -384,4 +363,4 @@ server.registerTool('render_report', {
 // ------------------------------------------------------------------ start ---
 
 await server.connect(new StdioServerTransport());
-console.error(`wa-audit MCP server ready (output dir: ${OUT_DIR}, WAHA: ${BASE || 'not configured'})`);
+console.error(`wa-audit MCP server ready (output dir: ${OUT_DIR}, WAHA: ${wahaBase() || 'not configured'})`);
