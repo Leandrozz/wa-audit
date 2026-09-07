@@ -392,3 +392,127 @@ test('panel HTTP: security gates, audits, config, context, env, dimensions, WAHA
     mock.kill();
   }
 });
+
+/** Attaches to the SSE stream and resolves when `event: end` arrives (immediately if the job already ended). */
+export async function waitJob(base) {
+  const r = await fetch(base + '/api/jobs/stream');
+  assert.equal(r.headers.get('content-type'), 'text/event-stream');
+  const text = await r.text();
+  const m = /event: end\ndata: (\{[^\n]*\})/.exec(text);
+  assert.ok(m, `no end event in stream:\n${text.slice(-2000)}`);
+  return { exit_code: JSON.parse(m[1]).exit_code, text };
+}
+
+export async function runStep(base, slug, step, options = {}) {
+  const r = await api(base, 'POST', `/api/audits/${slug}/run`, { step, options });
+  assert.equal(r.status, 202, `${step}: ${JSON.stringify(r.body)}`);
+  const { exit_code, text } = await waitJob(base);
+  assert.equal(exit_code, 0, `${step} failed:\n${text.slice(-3000)}`);
+}
+
+test('panel HTTP: pipeline end to end (probe → export → threads → analyze → reports), lock, downloads', async () => {
+  const mock = await startMock(8445);
+  const cwd = tmpDir();
+  const dataDir = path.join(cwd, 'data');
+  const { child: panel, base } = await startPanel(cwd, scrubbedEnv({
+    WA_PANEL_DATA_DIR: dataDir, WA_PANEL_PORT: '0', WAHA_BASE_URL: 'http://localhost:8445', WAHA_API_KEY: 'test',
+  }));
+  try {
+    // no job ever started: the stream ends at once with a null exit code
+    assert.equal((await waitJob(base)).exit_code, null);
+    assert.equal((await api(base, 'GET', '/api/jobs/current')).body, null);
+    assert.equal((await api(base, 'POST', '/api/jobs/cancel')).status, 404);
+
+    await api(base, 'POST', '/api/audits', { slug: 'demo' });
+    const cfg = (await api(base, 'GET', '/api/audits/demo/config')).body;
+    cfg.business.name = 'Demo Industrial SRL';
+    cfg.business.internalEmailDomains = ['fixture-internal.test'];
+    cfg.crm.file = path.join(ROOT, 'fixtures', 'waha-dump', 'crm.csv');
+    cfg.llm.provider = 'mock';
+    cfg.llm.cannedDir = path.join(ROOT, 'fixtures', 'llm-canned');
+    cfg.source = { kind: 'waha', session: 'fixture' };
+    let r = await api(base, 'PUT', '/api/audits/demo/config', cfg);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    await api(base, 'PUT', '/api/audits/demo/business-context', { what_we_sell: 'cintas transportadoras' });
+
+    // unknown step / bad options are refused before anything spawns
+    assert.equal((await api(base, 'POST', '/api/audits/demo/run', { step: 'rm-rf' })).status, 400);
+    assert.equal((await api(base, 'POST', '/api/audits/nope/run', { step: 'probe' })).status, 404);
+
+    // lock: two runs fired in the same tick → exactly one 409
+    const pair = await Promise.all([
+      api(base, 'POST', '/api/audits/demo/run', { step: 'probe' }),
+      api(base, 'POST', '/api/audits/demo/run', { step: 'probe' }),
+    ]);
+    assert.deepEqual(pair.map((x) => x.status).sort(), [202, 409]);
+    assert.equal((await waitJob(base)).exit_code, 0);
+    let cur = (await api(base, 'GET', '/api/jobs/current')).body;
+    assert.equal(cur.step, 'probe');
+    assert.equal(cur.running, false);
+    assert.equal(cur.exit_code, 0);
+    assert.ok(cur.tail.length > 0);
+
+    const hdr = await fetch(base + '/api/jobs/current');
+    assert.equal(hdr.headers.get('access-control-allow-origin'), null, 'no CORS headers, ever');
+    assert.equal(hdr.headers.get('cache-control'), 'no-store');
+    assert.equal((await api(base, 'GET', '/api/audits/demo/threads/%ZZ')).status, 400, 'malformed escape is a bad request');
+    assert.equal((await fetch(base + '/api/audits/demo/business-context', { method: 'PUT', headers: PANEL_HEADERS })).status, 400, 'empty body never wipes state');
+
+    await runStep(base, 'demo', 'export');
+    assert.equal((await api(base, 'GET', '/api/audits/demo/status')).body.next_step, 'threads');
+
+    await runStep(base, 'demo', 'threads');
+    let st = (await api(base, 'GET', '/api/audits/demo/status')).body;
+    assert.equal(st.next_step, 'analyze');
+    assert.ok(st.summary.messages_included > 0);
+    assert.equal(st.summary.threads, 23);
+    r = await api(base, 'GET', '/api/audits/demo/threads?limit=5');
+    assert.equal(r.body.items.length, 5);
+    assert.equal(r.body.items[0].metrics.two_way, true);
+    assert.equal(r.body.items[0].messages, undefined);
+    const first = r.body.items[0].thread_id;
+    r = await api(base, 'GET', `/api/audits/demo/threads/${encodeURIComponent(first)}`);
+    assert.ok(Array.isArray(r.body.messages) && r.body.messages.length > 0);
+
+    await runStep(base, 'demo', 'analyze', { dimensions: ['frequent_questions', 'ops_response_times'] });
+    r = await api(base, 'GET', '/api/audits/demo/analysis');
+    assert.equal(r.body.dimensions.length, 2);
+    assert.ok(r.body.dimensions.every((d) => typeof d.verdict.reviewed === 'number'));
+    st = (await api(base, 'GET', '/api/audits/demo/status')).body;
+    assert.equal(st.next_step, 'report');
+    assert.deepEqual(st.dimensions_done, ['frequent_questions', 'ops_response_times']);
+
+    await runStep(base, 'demo', 'report-xlsx');
+    await runStep(base, 'demo', 'report-html');
+    r = await api(base, 'GET', '/api/audits/demo/files/whatsapp-report.xlsx');
+    assert.equal(r.status, 200);
+    assert.match(r.ct, /spreadsheetml/);
+    assert.ok(r.body.length > 1000);
+    r = await api(base, 'GET', '/api/audits/demo/files/whatsapp-report.html');
+    assert.equal(r.status, 200);
+    assert.match(r.ct, /text\/html/);
+    assert.equal((await api(base, 'GET', '/api/audits/demo/files/whatsapp-report.docx')).status, 404, 'not rendered');
+    assert.equal((await api(base, 'GET', '/api/audits/demo/files/wa-audit.config.json')).status, 404, 'not whitelisted');
+    st = (await api(base, 'GET', '/api/audits/demo/status')).body;
+    assert.equal(st.files['whatsapp-report.xlsx'], true);
+    assert.equal(st.files['whatsapp-report.html'], true);
+
+    // probe on a non-WAHA audit is refused; a legacy dir without config gets one on first run
+    await api(base, 'POST', '/api/audits', { slug: 'ig-test' });
+    const igCfg = (await api(base, 'GET', '/api/audits/ig-test/config')).body;
+    igCfg.source = { kind: 'ig', session: 'ig' };
+    await api(base, 'PUT', '/api/audits/ig-test/config', igCfg);
+    r = await api(base, 'POST', '/api/audits/ig-test/run', { step: 'probe' });
+    assert.equal(r.status, 400);
+    assert.match(r.body.error, /WAHA/);
+    mkdirSync(path.join(dataDir, 'legacy'));
+    assert.equal((await api(base, 'GET', '/api/audits')).body.find((a) => a.slug === 'legacy').has_config, false);
+    r = await api(base, 'POST', '/api/audits/legacy/run', { step: 'report-xlsx' });
+    assert.equal(r.status, 202);
+    assert.notEqual((await waitJob(base)).exit_code, 0, 'no corpus there, the renderer fails — but the job ran');
+    assert.ok(existsSync(path.join(dataDir, 'legacy', 'wa-audit.config.json')), 'config seeded on first run');
+  } finally {
+    panel.kill();
+    mock.kill();
+  }
+});

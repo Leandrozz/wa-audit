@@ -73,7 +73,7 @@ function readJson(req) {
     req.on('end', () => {
       if (size > MAX_BODY) return reject(new HttpError(413, 'body too large (max 1 MiB)'));
       const raw = Buffer.concat(chunks).toString('utf8');
-      if (!raw.trim()) return resolve({});
+      if (!raw.trim()) return reject(new HttpError(400, 'body must be a JSON object'));
       try {
         const v = JSON.parse(raw);
         if (v === null || typeof v !== 'object') throw new Error('not an object');
@@ -85,6 +85,15 @@ function readJson(req) {
     req.on('error', reject);
   });
 }
+
+/** decodeURIComponent that turns a malformed escape into a 400 instead of a 500. */
+const decode = (s) => {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    throw new HttpError(400, 'malformed URL escape');
+  }
+};
 
 function envFiles() {
   return ENV_FILES.map((file) => {
@@ -116,7 +125,7 @@ route('GET', /^\/api\/audits\/([^/]+)\/business-context$/, (req, res, [slug]) =>
 route('PUT', /^\/api\/audits\/([^/]+)\/business-context$/, async (req, res, [slug]) => [200, store.writeContext(slug, await readJson(req))]);
 route('GET', /^\/api\/audits\/([^/]+)\/threads$/, (req, res, [slug], url) =>
   [200, store.threadsPage(slug, Number(url.searchParams.get('offset') ?? 0), Number(url.searchParams.get('limit') ?? 20))]);
-route('GET', /^\/api\/audits\/([^/]+)\/threads\/([^/]+)$/, (req, res, [slug, id]) => [200, store.thread(slug, decodeURIComponent(id))]);
+route('GET', /^\/api\/audits\/([^/]+)\/threads\/([^/]+)$/, (req, res, [slug, id]) => [200, store.thread(slug, decode(id))]);
 route('GET', /^\/api\/audits\/([^/]+)\/analysis$/, (req, res, [slug]) => [200, store.analysis(slug)]);
 route('GET', /^\/api\/dimensions$/, () => [200, listDimensions()]);
 route('GET', /^\/api\/env$/, () => [200, envFiles()]);
@@ -128,12 +137,61 @@ route('POST', /^\/api\/waha\/sessions$/, async (req) => {
   return [201, { name, body: await createSession(name) }];
 });
 route('GET', /^\/api\/waha\/qr\/([^/]+)$/, async (req, res, [session]) => {
-  const png = await qrPng(decodeURIComponent(session));
+  const png = await qrPng(decode(session));
   res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
   res.end(png);
 });
 
-// Jobs, SSE and downloads: Task 6 appends them here.
+route('GET', /^\/api\/audits\/([^/]+)\/files\/([^/]+)$/, (req, res, [slug, name]) => {
+  const file = store.filePath(slug, decode(name));
+  if (!file) throw new HttpError(404, 'no such file');
+  res.writeHead(200, {
+    'Content-Type': MIME[path.extname(file)] ?? 'application/octet-stream',
+    'Content-Disposition': `attachment; filename="${path.basename(file)}"`,
+    'X-Content-Type-Options': 'nosniff',
+    'Cache-Control': 'no-store',
+  });
+  fs.createReadStream(file).pipe(res);
+});
+
+route('POST', /^\/api\/audits\/([^/]+)\/run$/, async (req, res, [slug]) => {
+  const { step, options = {} } = await readJson(req);
+  const cfg = store.readConfig(slug);
+  const cmd = commandFor(String(step), cfg, options && typeof options === 'object' ? options : {});
+  store.ensureConfig(slug);
+  const job = jobs.start({
+    slug,
+    step: String(step),
+    ...cmd,
+    env: { ...process.env, WA_OUT_DIR: store.dir(slug), WA_CONFIG_FILE: store.configPath(slug) },
+  });
+  return [202, job];
+});
+
+route('GET', /^\/api\/jobs\/current$/, () => [200, jobs.current()]);
+
+route('POST', /^\/api\/jobs\/cancel$/, () => {
+  if (!jobs.cancel()) throw new HttpError(404, 'no job is running');
+  return [200, { cancelled: true }];
+});
+
+route('GET', /^\/api\/jobs\/stream$/, (req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Content-Type-Options': 'nosniff' });
+  const write = (ev) => res.write(ev.type === 'end'
+    ? `event: end\ndata: ${JSON.stringify({ exit_code: ev.exit_code })}\n\n`
+    : `data: ${JSON.stringify({ s: ev.s, t: ev.t })}\n\n`);
+  for (const line of jobs.lines()) write({ type: 'line', ...line });
+  if (!jobs.running()) {
+    write({ type: 'end', exit_code: jobs.current()?.exit_code ?? null });
+    res.end();
+    return;
+  }
+  const off = jobs.subscribe((ev) => {
+    write(ev);
+    if (ev.type === 'end') { off(); res.end(); }
+  });
+  req.on('close', off);
+});
 
 // ------------------------------------------------------------------ server ---
 const server = http.createServer(async (req, res) => {
@@ -154,6 +212,7 @@ const server = http.createServer(async (req, res) => {
       if (out) send(res, out[0], out[1]);
       return;
     }
+    if (req.method !== 'GET') req.resume();
     throw new HttpError(404, `no route for ${req.method} ${url.pathname}`);
   } catch (e) {
     const status = e.status && e.status >= 400 && !(e instanceof WahaError) ? e.status : e instanceof WahaError ? 502 : 500;
