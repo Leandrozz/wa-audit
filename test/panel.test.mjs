@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { writeFileSync, copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import http from 'node:http';
 import { ROOT, tmpDir, startMock } from './harness.mjs';
 import { resolveConfig, DEFAULTS } from '../src/lib/config.mjs';
 import { listSessions, createSession, qrPng, WahaError, wahaBase } from '../src/lib/waha.mjs';
@@ -261,4 +262,133 @@ test('jobs: a throwing subscriber does not break the others or the runner', asyn
     console.error = original;
   }
   assert.equal(runner.running(), false);
+});
+
+export const PANEL_HEADERS = { 'content-type': 'application/json', 'x-wa-panel': '1' };
+
+/** Boots src/panel.mjs with the given cwd/env; resolves { child, base } once it prints its URL. */
+export function startPanel(cwd, env) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [path.join(ROOT, 'src', 'panel.mjs')], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let buf = '';
+    const timer = setTimeout(() => { child.kill(); reject(new Error(`panel did not start:\n${buf}`)); }, 10_000);
+    child.stdout.on('data', (d) => {
+      buf += d;
+      const m = /panel listening on (http:\/\/127\.0\.0\.1:\d+)/.exec(buf);
+      if (m) { clearTimeout(timer); resolve({ child, base: m[1] }); }
+    });
+    child.stderr.on('data', (d) => { buf += d; });
+    child.on('exit', (code) => { clearTimeout(timer); reject(new Error(`panel exited early (${code}):\n${buf}`)); });
+  });
+}
+
+/** JSON API helper: GET without headers, everything else with the panel headers. */
+export async function api(base, method, p, body) {
+  const r = await fetch(base + p, {
+    method,
+    headers: method === 'GET' ? {} : PANEL_HEADERS,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const ct = r.headers.get('content-type') ?? '';
+  return { status: r.status, ct, body: ct.includes('json') ? await r.json() : Buffer.from(await r.arrayBuffer()) };
+}
+
+/** Raw node:http GET so the Host header can be forged (fetch drops it). */
+export function rawGet(base, p, headers) {
+  const u = new URL(base + p);
+  return new Promise((resolve, reject) => {
+    http.get({ host: u.hostname, port: u.port, path: u.pathname, headers }, (res) => {
+      res.resume();
+      res.on('end', () => resolve(res.statusCode));
+    }).on('error', reject);
+  });
+}
+
+test('panel HTTP: security gates, audits, config, context, env, dimensions, WAHA proxy', async () => {
+  const mock = await startMock(8443);
+  const cwd = tmpDir();
+  const dataDir = path.join(cwd, 'data');
+  const { child: panel, base } = await startPanel(cwd, scrubbedEnv({
+    WA_PANEL_DATA_DIR: dataDir, WA_PANEL_PORT: '0', WAHA_BASE_URL: 'http://localhost:8443', WAHA_API_KEY: 'test',
+  }));
+  try {
+    // --- security
+    assert.equal(await rawGet(base, '/api/audits', { Host: 'evil.example' }), 403);
+    assert.equal(await rawGet(base, '/api/audits', { Host: 'localhost:1' }), 200);
+    assert.equal((await fetch(base + '/api/audits', { method: 'POST', body: '{}' })).status, 403, 'no panel headers');
+    assert.equal((await fetch(base + '/api/audits', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status, 403, 'json but no X-WA-Panel');
+    assert.equal((await fetch(base + '/api/audits', { method: 'OPTIONS' })).status, 403);
+    let r = await api(base, 'POST', '/api/audits', { slug: '../x' });
+    assert.equal(r.status, 400);
+    assert.match(r.body.error, /invalid audit slug/);
+    r = await api(base, 'GET', '/api/nope');
+    assert.equal(r.status, 404);
+    assert.equal((await fetch(base + '/api/audits', { method: 'POST', headers: PANEL_HEADERS, body: 'not json' })).status, 400);
+    const big = await fetch(base + '/api/audits', { method: 'POST', headers: PANEL_HEADERS, body: '{"slug":"' + 'a'.repeat(1024 * 1024 + 10) + '"}' });
+    assert.equal(big.status, 413);
+
+    // --- audits
+    r = await api(base, 'GET', '/api/audits');
+    assert.deepEqual(r.body, []);
+    r = await api(base, 'POST', '/api/audits', { slug: 'demo' });
+    assert.equal(r.status, 201);
+    assert.equal(r.body.slug, 'demo');
+    assert.equal((await api(base, 'POST', '/api/audits', { slug: 'demo' })).status, 409);
+    r = await api(base, 'GET', '/api/audits');
+    assert.deepEqual(r.body.map((a) => [a.slug, a.has_config, a.business_name]), [['demo', true, 'demo']]);
+    assert.equal((await api(base, 'GET', '/api/audits/nope/status')).status, 404);
+    assert.equal((await api(base, 'GET', '/api/audits/demo/files/..%2F..%2Fpackage.json')).status, 404);
+
+    // --- config round trip + validation through resolveConfig
+    const cfg = (await api(base, 'GET', '/api/audits/demo/config')).body;
+    assert.equal(cfg.business.name, 'demo');
+    assert.equal(cfg.timezone.offsetMinutes, undefined);
+    cfg.business.name = 'Demo Industrial SRL';
+    cfg.source = { kind: 'waha', session: 'fixture' };
+    r = await api(base, 'PUT', '/api/audits/demo/config', cfg);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.business.name, 'Demo Industrial SRL');
+    assert.equal(r.body.output.dir, path.join(dataDir, 'demo'));
+    assert.deepEqual((await api(base, 'GET', '/api/audits/demo/config')).body, r.body);
+    r = await api(base, 'PUT', '/api/audits/demo/config', { ...cfg, bogus: 1 });
+    assert.equal(r.status, 400);
+    assert.match(r.body.error, /unknown config key "bogus"/);
+    r = await api(base, 'PUT', '/api/audits/demo/config', { ...cfg, timezone: { utcOffset: 'nope' } });
+    assert.equal(r.status, 400);
+    assert.match(r.body.error, /utcOffset/);
+
+    // --- status + business context
+    assert.equal((await api(base, 'GET', '/api/audits/demo/status')).body.next_step, 'context');
+    r = await api(base, 'PUT', '/api/audits/demo/business-context', { what_we_sell: 'cintas', extra_key: 'kept' });
+    assert.equal(r.status, 200);
+    assert.deepEqual((await api(base, 'GET', '/api/audits/demo/business-context')).body, { what_we_sell: 'cintas', extra_key: 'kept' });
+    assert.equal((await api(base, 'GET', '/api/audits/demo/status')).body.next_step, 'export');
+    assert.equal((await api(base, 'PUT', '/api/audits/demo/business-context', [1, 2])).status, 400);
+
+    // --- env + dimensions
+    r = await api(base, 'GET', '/api/env');
+    assert.deepEqual(r.body.map((e) => [e.file, e.exists]), [['waha.env', false], ['kapso.env', false], ['ig.env', false]]);
+    writeFileSync(path.join(cwd, 'kapso.env'), '# comment\nKAPSO_API_KEY=secret-value\nexport KAPSO_PHONE_NUMBER_ID=123\n');
+    r = await api(base, 'GET', '/api/env');
+    assert.deepEqual(r.body[1], { file: 'kapso.env', exists: true, keys: ['KAPSO_API_KEY', 'KAPSO_PHONE_NUMBER_ID'] });
+    assert.ok(!JSON.stringify(r.body).includes('secret-value'), 'values never leave the server');
+    r = await api(base, 'GET', '/api/dimensions');
+    assert.ok(r.body.some((d) => d.key === 'frequent_questions'));
+    assert.ok(!r.body.some((d) => d.key === 'verifier'));
+
+    // --- WAHA proxy
+    r = await api(base, 'GET', '/api/waha/sessions');
+    assert.equal(r.status, 200);
+    assert.equal(r.body[0].name, 'fixture');
+    r = await api(base, 'POST', '/api/waha/sessions', { name: 'audit' });
+    assert.equal(r.status, 201);
+    assert.equal((await api(base, 'POST', '/api/waha/sessions', { name: 'bad name' })).status, 400);
+    const qr = await fetch(base + '/api/waha/qr/fixture');
+    assert.equal(qr.status, 200);
+    assert.equal(qr.headers.get('content-type'), 'image/png');
+    assert.equal(Buffer.from(await qr.arrayBuffer()).subarray(1, 4).toString(), 'PNG');
+  } finally {
+    panel.kill();
+    mock.kill();
+  }
 });

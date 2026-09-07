@@ -21,6 +21,7 @@
     "report:docx": "node src/report-docx.mjs",
     "demo": "node tools/demo.mjs",
     "mcp": "node src/mcp-server.mjs",
+    "panel": "node src/panel.mjs",
     "test": "node --test \"test/*.test.mjs\""
   },
   "dependencies": {
