@@ -240,3 +240,25 @@ test('jobs: runner streams lines, ends with the exit code, refuses a second job'
   assert.equal(runner.current().exit_code, 3);
   assert.equal(runner.running(), false);
 });
+
+test('jobs: a throwing subscriber does not break the others or the runner', async () => {
+  const dir = tmpDir();
+  writeFileSync(path.join(dir, 'ok.mjs'), "console.log('hello'); process.exit(0);");
+  const runner = createJobRunner({ root: dir });
+  const seen = [];
+  runner.subscribe(() => { throw new Error('bad listener'); });
+  const ended = new Promise((resolve) => runner.subscribe((ev) => { seen.push(ev); if (ev.type === 'end') resolve(ev); }));
+  const errors = [];
+  const original = console.error;
+  console.error = (m) => errors.push(String(m));
+  try {
+    runner.start({ slug: 'x', step: 'probe', script: 'ok.mjs', args: [], env: process.env });
+    const end = await ended;
+    assert.equal(end.exit_code, 0);
+    assert.ok(seen.some((ev) => ev.type === 'line' && ev.t === 'hello'), 'the good subscriber still received the line');
+    assert.ok(errors.some((m) => m.includes('bad listener')), 'the failure is logged, not swallowed');
+  } finally {
+    console.error = original;
+  }
+  assert.equal(runner.running(), false);
+});

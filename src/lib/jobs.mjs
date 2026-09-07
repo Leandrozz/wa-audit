@@ -63,7 +63,11 @@ export function createJobRunner({ root, maxLines = 2000 }) {
   let job = null;
   let child = null;
   const listeners = new Set();
-  const emit = (ev) => { for (const fn of [...listeners]) fn(ev); };
+  const emit = (ev) => {
+    for (const fn of [...listeners]) {
+      try { fn(ev); } catch (e) { console.error(`job listener failed: ${e?.message ?? e}`); }
+    }
+  };
   const view = () => job && {
     id: job.id,
     slug: job.slug,
