@@ -71,14 +71,18 @@ export function createAuditStore({ dataDir, baseline }) {
     return stripDerived(resolveConfig(stored, {}).cfg);
   }
   function reportNames(slug) {
-    const f = readConfig(slug).report.filename;
+    // Normalize defensively for hand-edited configs: extract bare filename and protect against traversal
+    const f = path.basename(String(readConfig(slug).report.filename || 'whatsapp-report.xlsx'));
     const base = path.basename(f, path.extname(f));
     return [f, `${base}.html`, `${base}.docx`];
   }
   function files(slug) {
     const d = existing(slug);
     const out = {};
-    for (const f of [...PIPELINE_FILES, ...reportNames(slug)]) out[f] = fs.existsSync(path.join(d, f));
+    for (const f of [...PIPELINE_FILES, ...reportNames(slug)]) {
+      const p = path.resolve(d, f);
+      out[f] = p.startsWith(d + path.sep) && fs.existsSync(p);
+    }
     return out;
   }
   function loadThreads(slug) {
@@ -105,7 +109,7 @@ export function createAuditStore({ dataDir, baseline }) {
       const d = dirOf(slug);
       if (fs.existsSync(d)) throw new AuditError(409, `audit "${slug}" already exists`);
       fs.mkdirSync(d, { recursive: true });
-      writeJson(configPath(slug), seed(slug));
+      writeJson(configPath(slug), stripDerived(seed(slug)));
       return item(slug);
     },
 
@@ -113,7 +117,7 @@ export function createAuditStore({ dataDir, baseline }) {
 
     ensureConfig(slug) {
       existing(slug);
-      if (!fs.existsSync(configPath(slug))) writeJson(configPath(slug), seed(slug));
+      if (!fs.existsSync(configPath(slug))) writeJson(configPath(slug), stripDerived(seed(slug)));
     },
 
     writeConfig(slug, body) {
@@ -122,6 +126,11 @@ export function createAuditStore({ dataDir, baseline }) {
       const { cfg, warnings, errors } = resolveConfig(body, {});
       const problems = [...errors, ...warnings];
       if (problems.length) throw new AuditError(400, problems.join('\n'));
+      // Sanitize report.filename: must be a bare file name (no directories, no traversal)
+      const filename = cfg.report.filename;
+      if (typeof filename !== 'string' || filename.length === 0 || /[/\\]/.test(filename) || filename === '.' || filename === '..') {
+        throw new AuditError(400, 'report.filename must be a bare file name (no directories), e.g. "whatsapp-report.xlsx"');
+      }
       const out = stripDerived({ ...cfg, output: { dir: d } });
       writeJson(configPath(slug), out);
       return out;

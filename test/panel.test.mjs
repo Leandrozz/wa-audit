@@ -133,6 +133,21 @@ test('audit store: create, list, config validation, status rule, downloads white
   assert.equal(written.timezone.offsetMinutes, undefined);
   assert.deepEqual(JSON.parse(readFileSync(path.join(dataDir, 'acme', 'wa-audit.config.json'), 'utf8')), written);
 
+  // report.filename sanitization: reject path traversal
+  assert.throws(() => store.writeConfig('acme', { ...cfg, report: { filename: '../../evil.xlsx' } }), (e) => e.status === 400 && /report\.filename/.test(e.message));
+  assert.throws(() => store.writeConfig('acme', { ...cfg, report: { filename: '..' } }), (e) => e.status === 400);
+  // hand-edited config with a traversal filename: keys stay bare and probes stay inside the audit dir
+  mkdirSync(path.join(dataDir, 'hand'));
+  writeFileSync(path.join(dataDir, 'hand', 'wa-audit.config.json'), JSON.stringify({ report: { filename: '../../package.json' } }));
+  const handFiles = store.status('hand').files;
+  assert.ok(Object.keys(handFiles).every((k) => !k.includes('..') && !k.includes('/') && !k.includes('\\')));
+  assert.equal(handFiles['package.json'], false, 'probes only inside the audit dir');
+  assert.equal(store.filePath('hand', '../../package.json'), null);
+  // create() never persists derived fields, even when the baseline carries them
+  const rawStore = createAuditStore({ dataDir, baseline: resolveConfig({}, {}).cfg });
+  rawStore.create('raw');
+  assert.equal(JSON.parse(readFileSync(path.join(dataDir, 'raw', 'wa-audit.config.json'), 'utf8')).timezone.offsetMinutes, undefined);
+
   let st = store.status('acme');
   assert.equal(st.next_step, 'context');
   assert.equal(st.files['acme.xlsx'], false);
