@@ -7,6 +7,7 @@ import { ROOT, tmpDir, startMock } from './harness.mjs';
 import { resolveConfig, DEFAULTS } from '../src/lib/config.mjs';
 import { listSessions, createSession, qrPng, WahaError, wahaBase } from '../src/lib/waha.mjs';
 import { createAuditStore, listDimensions, AuditError, SLUG_RE } from '../src/lib/audits.mjs';
+import { commandFor, createJobRunner, JobError } from '../src/lib/jobs.mjs';
 
 /** process.env with every WA_/WAHA_/KAPSO_/IG_ key removed (the panel tests
  *  must not inherit the developer's shell), plus explicit extras. */
@@ -194,4 +195,48 @@ test('audit store: create, list, config validation, status rule, downloads white
   assert.ok(dims.some((d) => d.key === 'frequent_questions' && d.title.length > 0));
   assert.ok(!dims.some((d) => d.key === 'verifier'));
   assert.ok(SLUG_RE.test('acme-2026'));
+});
+
+test('jobs: step → command table', () => {
+  const cfg = (kind, session = 's1') => ({ source: { kind, session } });
+  assert.deepEqual(commandFor('probe', cfg('waha')), { script: 'src/probe.mjs', args: [] });
+  assert.throws(() => commandFor('probe', cfg('kapso')), (e) => e instanceof JobError && e.status === 400);
+  assert.deepEqual(commandFor('export', cfg('waha')), { script: 'src/export.mjs', args: ['s1'] });
+  assert.deepEqual(commandFor('export', cfg('kapso')), { script: 'src/export-kapso.mjs', args: [] });
+  assert.deepEqual(commandFor('export', cfg('ig')), { script: 'src/export-ig.mjs', args: [] });
+  assert.deepEqual(commandFor('export', cfg('ig'), { since: 30 }), { script: 'src/export-ig.mjs', args: ['--since', '30'] });
+  assert.throws(() => commandFor('export', cfg('ig'), { since: -1 }), (e) => e.status === 400);
+  assert.deepEqual(commandFor('threads', cfg('waha')), { script: 'src/threads.mjs', args: ['--session', 's1'] });
+  assert.deepEqual(commandFor('threads', cfg('waha'), { noNet: true }), { script: 'src/threads.mjs', args: ['--session', 's1', '--no-net'] });
+  assert.deepEqual(commandFor('threads', cfg('kapso')), { script: 'src/threads.mjs', args: ['--session', 's1', '--no-net'] });
+  assert.deepEqual(commandFor('analyze', cfg('ig')), { script: 'src/analyze.mjs', args: [] });
+  assert.deepEqual(commandFor('analyze', cfg('waha'), { dimensions: ['frequent_questions', 'fate'] }), { script: 'src/analyze.mjs', args: ['--dimensions', 'frequent_questions,fate'] });
+  assert.throws(() => commandFor('analyze', cfg('waha'), { dimensions: ['bad key'] }), (e) => e.status === 400);
+  assert.deepEqual(commandFor('report-xlsx', cfg('waha')), { script: 'src/report-xlsx.mjs', args: [] });
+  assert.deepEqual(commandFor('report-html', cfg('waha')), { script: 'src/report-html.mjs', args: [] });
+  assert.deepEqual(commandFor('report-docx', cfg('waha')), { script: 'src/report-docx.mjs', args: [] });
+  assert.throws(() => commandFor('rm-rf', cfg('waha')), (e) => e.status === 400);
+});
+
+test('jobs: runner streams lines, ends with the exit code, refuses a second job', async () => {
+  const dir = tmpDir();
+  writeFileSync(path.join(dir, 'echo.mjs'), "console.log('one'); console.error('two'); process.stdout.write('three'); process.exit(3);");
+  const runner = createJobRunner({ root: dir, maxLines: 2 });
+  assert.equal(runner.current(), null);
+  assert.equal(runner.cancel(), false);
+
+  const events = [];
+  runner.subscribe((ev) => events.push(ev));
+  const ended = new Promise((resolve) => runner.subscribe((ev) => { if (ev.type === 'end') resolve(ev); }));
+  const view = runner.start({ slug: 'x', step: 'probe', script: 'echo.mjs', args: [], env: process.env });
+  assert.equal(view.running, true);
+  assert.throws(() => runner.start({ slug: 'x', step: 'probe', script: 'echo.mjs', args: [], env: process.env }), (e) => e instanceof JobError && e.status === 409);
+
+  const end = await ended;
+  assert.equal(end.exit_code, 3);
+  assert.deepEqual(events.filter((e) => e.type === 'line').map((e) => [e.s, e.t]).sort(), [['err', 'two'], ['out', 'one'], ['out', 'three']]);
+  assert.equal(runner.lines().length, 2, 'ring buffer keeps the last maxLines');
+  assert.equal(runner.current().running, false);
+  assert.equal(runner.current().exit_code, 3);
+  assert.equal(runner.running(), false);
 });
