@@ -38,6 +38,18 @@ test('resolveConfig: defaults, unknown keys, bad offset, source validation', () 
   const env = resolveConfig({ business: { name: 'file' } }, { WA_BUSINESS_NAME: 'env', WA_TZ_OFFSET: '+01:00' });
   assert.equal(env.cfg.business.name, 'env');
   assert.equal(env.cfg.timezone.offsetMinutes, 60);
+
+  // Regression: resolveConfig must not mutate DEFAULTS or any previously returned cfg
+  const beforeMutation = structuredClone(DEFAULTS);
+  const cfg1 = resolveConfig({}, { WA_TZ_OFFSET: '+01:00', WA_BUSINESS_NAME: 'env' });
+  assert.equal(cfg1.cfg.timezone.offsetMinutes, 60);
+  assert.equal(cfg1.cfg.business.name, 'env');
+
+  // Fresh call should return defaults unchanged, despite previous env overrides
+  const cfg2 = resolveConfig({}, {});
+  assert.deepEqual(DEFAULTS.timezone, { utcOffset: '-03:00' }, 'DEFAULTS.timezone should not have offsetMinutes added');
+  assert.equal(DEFAULTS.business.name, 'My Business', 'DEFAULTS.business.name should not be mutated');
+  assert.deepEqual(cfg2.cfg.timezone, { utcOffset: '-03:00', offsetMinutes: -180 }, 'Fresh call should have offsetMinutes but not mutate DEFAULTS');
 });
 
 test('loadConfig honors WA_CONFIG_FILE and refuses a missing one', () => {

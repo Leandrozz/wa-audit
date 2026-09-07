@@ -87,7 +87,7 @@ const csvList = (s) => String(s).split(',').map((x) => x.trim()).filter(Boolean)
 export function resolveConfig(fromFile = {}, env = {}) {
   const warnings = [];
   const errors = [];
-  const cfg = mergeSection(DEFAULTS, fromFile, '', warnings);
+  const cfg = mergeSection(structuredClone(DEFAULTS), fromFile, '', warnings);
 
   if (env.WA_OUT_DIR) cfg.output.dir = env.WA_OUT_DIR;
   if (env.WA_BUSINESS_NAME) cfg.business.name = env.WA_BUSINESS_NAME;
