@@ -497,6 +497,17 @@ test('panel HTTP: pipeline end to end (probe → export → threads → analyze 
     assert.equal(st.files['whatsapp-report.xlsx'], true);
     assert.equal(st.files['whatsapp-report.html'], true);
 
+    // a client that aborts a download mid-stream must not take the panel down, and the next download still works
+    const ac = new AbortController();
+    const partial = await fetch(base + '/api/audits/demo/files/whatsapp-report.xlsx', { signal: ac.signal });
+    assert.equal(partial.status, 200);
+    ac.abort();
+    await assert.rejects(partial.arrayBuffer());
+    assert.equal((await api(base, 'GET', '/api/jobs/current')).status, 200, 'panel still alive after an aborted download');
+    r = await api(base, 'GET', '/api/audits/demo/files/whatsapp-report.xlsx');
+    assert.equal(r.status, 200);
+    assert.ok(r.body.length > 1000);
+
     // probe on a non-WAHA audit is refused; a legacy dir without config gets one on first run
     await api(base, 'POST', '/api/audits', { slug: 'ig-test' });
     const igCfg = (await api(base, 'GET', '/api/audits/ig-test/config')).body;

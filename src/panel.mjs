@@ -19,6 +19,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { pipeline } from 'node:stream/promises';
 import { loadConfig } from './lib/config.mjs';
 import { createAuditStore, listDimensions } from './lib/audits.mjs';
 import { createJobRunner, commandFor } from './lib/jobs.mjs';
@@ -142,16 +143,16 @@ route('GET', /^\/api\/waha\/qr\/([^/]+)$/, async (req, res, [session]) => {
   res.end(png);
 });
 
-route('GET', /^\/api\/audits\/([^/]+)\/files\/([^/]+)$/, (req, res, [slug, name]) => {
+route('GET', /^\/api\/audits\/([^/]+)\/files\/([^/]+)$/, async (req, res, [slug, name]) => {
   const file = store.filePath(slug, decode(name));
   if (!file) throw new HttpError(404, 'no such file');
   res.writeHead(200, {
     'Content-Type': MIME[path.extname(file)] ?? 'application/octet-stream',
-    'Content-Disposition': `attachment; filename="${path.basename(file)}"`,
+    'Content-Disposition': `attachment; filename="${path.basename(file).replace(/["\\\r\n]/g, '_')}"`,
     'X-Content-Type-Options': 'nosniff',
     'Cache-Control': 'no-store',
   });
-  fs.createReadStream(file).pipe(res);
+  await pipeline(fs.createReadStream(file), res).catch(() => res.destroy());
 });
 
 route('POST', /^\/api\/audits\/([^/]+)\/run$/, async (req, res, [slug]) => {
