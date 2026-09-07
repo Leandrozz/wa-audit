@@ -7,7 +7,8 @@
  *   WA_INTERNAL_NUMBERS (comma-separated), WA_CRM_FILE, WA_REPORT_FILENAME,
  *   WA_LOCALE, WA_TZ_OFFSET (e.g. "-03:00"), WA_DEFAULT_COUNTRY (ISO-3166),
  *   WA_LLM_PROVIDER, WA_LLM_MODEL, WA_LLM_BASE_URL, WA_LLM_CANNED_DIR,
- *   WA_ANALYSIS_LANGUAGE
+ *   WA_ANALYSIS_LANGUAGE,
+ *   WA_CONFIG_FILE (path of the config file to read instead of ./wa-audit.config.json; must exist if set)
  *
  * WAHA connection settings (WAHA_BASE_URL, WAHA_API_KEY, WAHA_BASIC_AUTH,
  * WAHA_SESSION) are env-only on purpose: they are secrets, not configuration.
@@ -16,7 +17,7 @@
  */
 import { readFileSync, existsSync } from 'node:fs';
 
-const DEFAULTS = {
+export const DEFAULTS = {
   business: {
     name: 'My Business',
     internalNumbers: [],       // E.164 or any parseable format; marked is_internal
@@ -49,9 +50,15 @@ const DEFAULTS = {
     language: 'es',            // language the LLM writes the report content in
     maxCorpusChars: 150000,    // context budget for the corpus digest
   },
+  source: {
+    kind: 'waha',              // waha | kapso | ig — which exporter the panel runs
+    session: 'default',        // WAHA session name / corpus label for kapso and ig
+  },
 };
 
 const CONFIG_FILE = 'wa-audit.config.json';
+const SOURCE_KINDS = ['waha', 'kapso', 'ig'];
+const SESSION_RE = /^[A-Za-z0-9_-]+$/;
 
 function mergeSection(base, over, path, warnings) {
   if (over === undefined) return base;
@@ -71,20 +78,17 @@ function mergeSection(base, over, path, warnings) {
 
 const csvList = (s) => String(s).split(',').map((x) => x.trim()).filter(Boolean);
 
-export function loadConfig() {
+/**
+ * Pure resolution: defaults < fromFile < env. Never prints, never exits.
+ * Returns { cfg, warnings, errors }; cfg.timezone.offsetMinutes is set when
+ * the offset is valid. Both the CLIs (via loadConfig) and the web panel
+ * validate through this one function.
+ */
+export function resolveConfig(fromFile = {}, env = {}) {
   const warnings = [];
-  let fromFile = {};
-  if (existsSync(CONFIG_FILE)) {
-    try {
-      fromFile = JSON.parse(readFileSync(CONFIG_FILE, 'utf8'));
-    } catch (e) {
-      console.error(`Could not parse ${CONFIG_FILE}: ${String(e).slice(0, 160)}`);
-      process.exit(1);
-    }
-  }
+  const errors = [];
   const cfg = mergeSection(DEFAULTS, fromFile, '', warnings);
 
-  const env = process.env;
   if (env.WA_OUT_DIR) cfg.output.dir = env.WA_OUT_DIR;
   if (env.WA_BUSINESS_NAME) cfg.business.name = env.WA_BUSINESS_NAME;
   if (env.WA_INTERNAL_EMAIL_DOMAINS) cfg.business.internalEmailDomains = csvList(env.WA_INTERNAL_EMAIL_DOMAINS);
@@ -102,12 +106,39 @@ export function loadConfig() {
 
   const m = /^([+-])(\d{2}):(\d{2})$/.exec(cfg.timezone.utcOffset);
   if (!m) {
-    console.error(`Invalid timezone.utcOffset "${cfg.timezone.utcOffset}" — expected e.g. "-03:00"`);
+    errors.push(`Invalid timezone.utcOffset "${cfg.timezone.utcOffset}" — expected e.g. "-03:00"`);
+  } else {
+    // Single source of truth for the offset: minutes for math, string for ISO suffixes.
+    cfg.timezone.offsetMinutes = (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3]));
+  }
+  if (!SOURCE_KINDS.includes(cfg.source.kind)) {
+    errors.push(`Invalid source.kind "${cfg.source.kind}" — expected one of ${SOURCE_KINDS.join(', ')}`);
+  }
+  if (!SESSION_RE.test(String(cfg.source.session))) {
+    errors.push(`Invalid source.session "${cfg.source.session}" — letters, digits, "_" and "-" only`);
+  }
+  return { cfg, warnings, errors };
+}
+
+export function loadConfig() {
+  const explicit = process.env.WA_CONFIG_FILE;
+  const file = explicit || CONFIG_FILE;
+  let fromFile = {};
+  if (explicit && !existsSync(file)) {
+    console.error(`WA_CONFIG_FILE points to "${file}", which does not exist`);
     process.exit(1);
   }
-  // Single source of truth for the offset: minutes for math, string for ISO suffixes.
-  cfg.timezone.offsetMinutes = (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3]));
-
+  if (existsSync(file)) {
+    try {
+      fromFile = JSON.parse(readFileSync(file, 'utf8'));
+    } catch (e) {
+      console.error(`Could not parse ${file}: ${String(e).slice(0, 160)}`);
+      process.exit(1);
+    }
+  }
+  const { cfg, warnings, errors } = resolveConfig(fromFile, process.env);
+  for (const e of errors) console.error(e);
+  if (errors.length) process.exit(1);
   for (const w of warnings) console.warn(`  ! config: ${w}`);
   return cfg;
 }
