@@ -536,6 +536,8 @@ test('panel HTML: served with CSP, no innerHTML, only talks to /api', async () =
     assert.equal(r.status, 200);
     assert.match(r.headers.get('content-type'), /text\/html/);
     assert.match(r.headers.get('content-security-policy'), /frame-ancestors 'none'/);
+    assert.equal(r.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(r.headers.get('cache-control'), 'no-store');
     const html = await r.text();
     assert.match(html, /<html lang="es">/);
     assert.ok(!/innerHTML|outerHTML|insertAdjacentHTML|document\.write/.test(html), 'DOM is built from text nodes only');
@@ -543,11 +545,14 @@ test('panel HTML: served with CSP, no innerHTML, only talks to /api', async () =
     for (const label of ['Estado', 'Fuente y WAHA', 'Pipeline', 'Contexto', 'Corpus', 'Hallazgos', 'Reportes', 'Config']) {
       assert.ok(html.includes(label), `tab ${label}`);
     }
+    assert.ok(!html.includes('prompt('), 'no prompt() dialog: it is unsupported in automation/CDP browsers and sandboxed iframes');
+    assert.ok(html.includes('id="new-slug"'), 'inline audit-creation input is present');
 
     const cspHeader = r.headers.get('content-security-policy');
     const nonce = /script-src 'nonce-([0-9a-f-]{36})'/.exec(cspHeader)?.[1];
     assert.ok(nonce, 'script-src carries a per-response nonce');
     assert.ok(!/script-src[^;]*unsafe-inline/.test(cspHeader), 'no unsafe-inline for scripts');
+    assert.ok(!/script-src[^;]*'self'/.test(cspHeader), 'script-src should be nonce-only, not also self');
     assert.match(cspHeader, /base-uri 'none'/);
     assert.ok(html.includes(`<script nonce="${nonce}">`), 'the served script tag carries the same nonce');
     assert.ok(!html.includes('__CSP_NONCE__'), 'placeholder fully replaced');

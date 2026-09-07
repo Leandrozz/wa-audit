@@ -34,7 +34,8 @@
 <header>
   <h1>wa-audit</h1>
   <label>Auditoría <select id="audit"></select></label>
-  <button id="new-audit">+ nueva auditoría</button>
+  <input id="new-slug" placeholder="nueva auditoría (ej. acme-2026)" pattern="[a-z0-9][a-z0-9-]{0,63}">
+  <button id="new-audit">Crear</button>
   <span id="job-badge" class="muted"></span>
 </header>
 <nav id="tabs" role="tablist"></nav>
@@ -81,6 +82,7 @@ const STEP_LABEL = { context: 'completar el contexto de negocio', export: 'expor
 const STEP_TAB = { context: 'contexto', export: 'pipeline', threads: 'pipeline', analyze: 'pipeline', report: 'reportes' };
 let slug = localStorage.getItem('wa-panel.audit') || '';
 let tab = localStorage.getItem('wa-panel.tab') || 'estado';
+if (!TABS.some(([id]) => id === tab)) tab = 'estado';
 let es = null;        // EventSource of the live log
 let qrTimer = null;   // QR refresh interval
 
@@ -95,11 +97,20 @@ async function loadAudits() {
   return audits;
 }
 $('audit').addEventListener('change', (e) => { slug = e.target.value; localStorage.setItem('wa-panel.audit', slug); render(); });
-$('new-audit').addEventListener('click', async () => {
-  const name = prompt('Nombre corto de la auditoría (minúsculas, números y guiones, ej. acme-2026):');
+async function createAudit() {
+  const input = $('new-slug');
+  const name = input.value.trim();
   if (!name) return;
-  try { await api('POST', '/api/audits', { slug: name.trim() }); slug = name.trim(); await loadAudits(); render(); } catch (e) { showError(e); }
-});
+  try {
+    await api('POST', '/api/audits', { slug: name });
+    input.value = '';
+    slug = name;
+    await loadAudits();
+    await render();
+  } catch (e) { showError(e); }
+}
+$('new-audit').addEventListener('click', createAudit);
+$('new-slug').addEventListener('keydown', (e) => { if (e.key === 'Enter') createAudit(); });
 function buildTabs() {
   const nav = clear($('tabs'));
   for (const [id, label] of TABS) {
@@ -110,9 +121,10 @@ async function render() {
   clearError();
   buildTabs();
   if (qrTimer) { clearInterval(qrTimer); qrTimer = null; }
+  if (es) { es.close(); es = null; }
   for (const [id] of TABS) $('tab-' + id).hidden = id !== tab;
   const sec = clear($('tab-' + tab));
-  if (!slug) { sec.append(el('p', {}, 'No hay auditorías todavía. Creá una con "+ nueva auditoría".')); return; }
+  if (!slug) { sec.append(el('p', {}, 'No hay auditorías todavía. Escribí un nombre arriba y apretá Crear.')); return; }
   try { await RENDER[tab](sec); } catch (e) { sec.append(el('p', { class: 'error' }, e.message)); }
 }
 
@@ -123,7 +135,7 @@ async function renderEstado(sec) {
   sec.append(el('table', {}, el('tbody', {}, Object.entries(st.files).map(([f, ok]) =>
     el('tr', {}, el('td', {}, f), el('td', { class: ok ? 'ok' : 'miss' }, ok ? 'presente' : 'falta'))))));
   sec.append(el('p', {}, 'Próximo paso: ', el('strong', {}, STEP_LABEL[st.next_step]), ' ',
-    el('button', { on: { click: () => { tab = STEP_TAB[st.next_step]; render(); } } }, 'Ir')));
+    el('button', { on: { click: () => { tab = STEP_TAB[st.next_step]; localStorage.setItem('wa-panel.tab', tab); render(); } } }, 'Ir')));
   if (st.summary) {
     const s = st.summary;
     const keys = ['threads', 'two_way_threads', 'unanswered_threads', 'messages_included', 'inbound', 'outbound', 'global_median_response_min', 'lids_unresolved', 'crm_matches', 'internal_threads'];
@@ -172,6 +184,7 @@ async function renderFuente(sec) {
     qrTimer = setInterval(tick, 20000);
   };
   const refresh = async () => {
+    if (qrTimer) { clearInterval(qrTimer); qrTimer = null; }
     clear(box);
     try {
       const sessions = await api('GET', '/api/waha/sessions');
@@ -226,7 +239,7 @@ async function renderPipeline(sec) {
 async function runStep(step, options) {
   clearError();
   try { await api('POST', '/api/audits/' + slug + '/run', { step, options: options || {} }); } catch (e) { showError(e); return; }
-  if (tab !== 'pipeline') { tab = 'pipeline'; await render(); } else attachLog();
+  if (tab !== 'pipeline') { tab = 'pipeline'; localStorage.setItem('wa-panel.tab', tab); await render(); } else attachLog();
 }
 async function cancelJob() {
   try { await api('POST', '/api/jobs/cancel'); } catch (e) { showError(e); }
@@ -238,15 +251,17 @@ function attachLog() {
   clear(log);
   const state = $('job-state');
   if (state) state.textContent = 'conectando…';
-  es = new EventSource('/api/jobs/stream');
-  es.onmessage = (ev) => {
+  const src = new EventSource('/api/jobs/stream');
+  es = src;
+  src.onmessage = (ev) => {
     const { s, t } = JSON.parse(ev.data);
     log.append(el('span', { class: s === 'err' ? 'err' : '' }, t + '\n'));
     log.scrollTop = log.scrollHeight;
     if (state) state.textContent = 'corriendo…';
   };
-  es.addEventListener('end', async (ev) => {
-    es.close(); es = null;
+  src.addEventListener('end', async (ev) => {
+    src.close();
+    if (es === src) es = null;
     const { exit_code } = JSON.parse(ev.data);
     if (state) {
       if (exit_code === 0) state.textContent = 'terminó OK';
@@ -260,7 +275,7 @@ function attachLog() {
     }
     updateBadge();
   });
-  es.onerror = () => { if (es) { es.close(); es = null; } };
+  src.onerror = () => { src.close(); if (es === src) es = null; };
   updateBadge();
 }
 async function updateBadge() {
@@ -306,9 +321,9 @@ async function renderCorpus(sec, offset = 0) {
       el('td', {}, t.metrics.unanswered ? 'sí' : 'no'),
       el('td', {}, t.metrics.median_response_min === null || t.metrics.median_response_min === undefined ? '' : t.metrics.median_response_min))))));
   sec.append(el('div', { class: 'row' },
-    el('button', { disabled: offset === 0, on: { click: () => { clear(sec); renderCorpus(sec, Math.max(0, offset - 20)); } } }, 'Anterior'),
+    el('button', { disabled: offset === 0, on: { click: () => { clear(sec); renderCorpus(sec, Math.max(0, offset - 20)).catch((e) => sec.append(el('p', { class: 'error' }, e.message))); } } }, 'Anterior'),
     el('span', { class: 'muted' }, (offset + 1) + '–' + (offset + page.items.length) + ' de ' + page.total),
-    el('button', { disabled: offset + 20 >= page.total, on: { click: () => { clear(sec); renderCorpus(sec, offset + 20); } } }, 'Siguiente')),
+    el('button', { disabled: offset + 20 >= page.total, on: { click: () => { clear(sec); renderCorpus(sec, offset + 20).catch((e) => sec.append(el('p', { class: 'error' }, e.message))); } } }, 'Siguiente')),
     detail);
 }
 async function showThread(id, detail) {
