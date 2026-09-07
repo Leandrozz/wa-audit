@@ -60,6 +60,10 @@ root config therefore seeds every new audit (locale, timezone, LLM).
    `<cwd>/wa-audit.config.json`. The panel sets it on every child process.
    Side effect: the MCP server and the CLIs gain per-audit configs for free
    (`WA_CONFIG_FILE=data/acme/wa-audit.config.json node src/analyze.mjs`).
+   An explicit `WA_CONFIG_FILE` that does not exist is an error, not a
+   silent fallback to defaults: pointing at nothing is a mistake. The panel
+   therefore seeds the config file of a legacy audit dir before its first
+   run.
 2. New defaults section `source: { kind: "waha", session: "default" }`.
    `kind` is one of `waha | kapso | ig`; `session` matches
    `^[A-Za-z0-9_-]+$`. Only the panel reads it in v1; the CLIs keep their
@@ -207,8 +211,9 @@ timeouts). Nothing else in the MCP server moves.
 
 ## 5. Fixtures, tests, docs
 
-- `fixtures/mock-waha.mjs`: add `GET /api/:session/auth/qr` returning a
-  1×1 PNG, so the QR proxy is exercised end to end.
+- `fixtures/mock-waha.mjs` already serves `GET /api/:session/auth/qr`
+  (a 1×1 PNG) and `POST /api/sessions`, so the QR proxy and session
+  creation are exercised end to end with nothing to add.
 - `test/panel.test.mjs` (node:test, no new deps); see the plan below.
 - `docs/panel.md`: run it, env files, the `data/<slug>` layout,
   `WA_CONFIG_FILE`, security posture, limits. README EN/ES: one short
