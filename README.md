@@ -213,6 +213,7 @@ overrides (env wins). The essentials:
 | `crm.file` | `null` | Optional CRM CSV (`phone,whatsapp,name,contact,email,segment,stage,location`) |
 | `llm.provider` | `"anthropic"` | `anthropic` \| `openai` (any compatible endpoint) \| `mock` |
 | `llm.model` | `null` | `anthropic` falls back to `claude-opus-5`; `openai` requires an explicit model |
+| `WA_CONFIG_FILE` (env) | — | Path of the config file to read instead of `./wa-audit.config.json`; must exist if set (per-audit configs, see [docs/panel.md](docs/panel.md)) |
 
 Secrets are env-only: `WAHA_BASE_URL`, `WAHA_API_KEY` (+ `ANTHROPIC_API_KEY`
 or `LLM_API_KEY` for phase 4). `WAHA_BASE_URL` has **no default on purpose**

@@ -31,6 +31,11 @@ const HTML = path.join(ROOT, 'src', 'panel.html');
 const ENV_FILES = ['waha.env', 'kapso.env', 'ig.env'];
 for (const f of ENV_FILES) if (fs.existsSync(f)) process.loadEnvFile(f);
 
+// WA_* env vars beat every audit's config file (see src/lib/config.mjs); make
+// that visible instead of letting it silently rewrite every report's identity.
+const OVERRIDES = Object.keys(process.env).filter((k) => /^WA_/.test(k) && !/^WA_(PANEL_|CONFIG_FILE$|OUT_DIR$)/.test(k)).sort();
+if (OVERRIDES.length) console.warn(`! WA_* variables in the environment override every audit's config: ${OVERRIDES.join(', ')}`);
+
 const DATA_DIR = path.resolve(process.env.WA_PANEL_DATA_DIR || 'data');
 const PORT = Number(process.env.WA_PANEL_PORT ?? 8480);
 const { timezone: { offsetMinutes, ...timezone }, ...restOfBaseline } = loadConfig();
@@ -132,16 +137,26 @@ route('GET', /^\/api\/audits\/([^/]+)\/threads$/, (req, res, [slug], url) =>
 route('GET', /^\/api\/audits\/([^/]+)\/threads\/([^/]+)$/, (req, res, [slug, id]) => [200, store.thread(slug, decode(id))]);
 route('GET', /^\/api\/audits\/([^/]+)\/analysis$/, (req, res, [slug]) => [200, store.analysis(slug)]);
 route('GET', /^\/api\/dimensions$/, () => [200, listDimensions()]);
-route('GET', /^\/api\/env$/, () => [200, envFiles()]);
+route('GET', /^\/api\/env$/, () => [200, { files: envFiles(), overrides: OVERRIDES }]);
 
-route('GET', /^\/api\/waha\/sessions$/, async () => [200, await listSessions()]);
+/** Runs a WAHA client call; a network failure (fetch throws TypeError, e.g. the instance is unreachable) becomes a 502 instead of an uncaught crash. */
+async function waha(fn) {
+  try {
+    return await fn();
+  } catch (e) {
+    if (e instanceof TypeError) throw new HttpError(502, 'WAHA unreachable: ' + e.message);
+    throw e;
+  }
+}
+
+route('GET', /^\/api\/waha\/sessions$/, async () => [200, await waha(() => listSessions())]);
 route('POST', /^\/api\/waha\/sessions$/, async (req) => {
   const name = String((await readJson(req)).name ?? '');
   if (!SESSION_RE.test(name)) throw new HttpError(400, 'invalid session name — letters, digits, "_" and "-" only');
-  return [201, { name, body: await createSession(name) }];
+  return [201, { name, body: await waha(() => createSession(name)) }];
 });
 route('GET', /^\/api\/waha\/qr\/([^/]+)$/, async (req, res, [session]) => {
-  const png = await qrPng(decode(session));
+  const png = await waha(() => qrPng(decode(session)));
   res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
   res.end(png);
 });
@@ -181,12 +196,14 @@ route('POST', /^\/api\/jobs\/cancel$/, () => {
 
 route('GET', /^\/api\/jobs\/stream$/, (req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Content-Type-Options': 'nosniff' });
+  res.flushHeaders();
   const write = (ev) => res.write(ev.type === 'end'
-    ? `event: end\ndata: ${JSON.stringify({ exit_code: ev.exit_code })}\n\n`
+    ? `event: end\ndata: ${JSON.stringify({ exit_code: ev.exit_code, signal: ev.signal ?? null, cancelled: ev.cancelled ?? false })}\n\n`
     : `data: ${JSON.stringify({ s: ev.s, t: ev.t })}\n\n`);
   for (const line of jobs.lines()) write({ type: 'line', ...line });
   if (!jobs.running()) {
-    write({ type: 'end', exit_code: jobs.current()?.exit_code ?? null });
+    const cur = jobs.current();
+    write({ type: 'end', exit_code: cur?.exit_code ?? null, signal: cur?.signal ?? null, cancelled: cur?.cancelled ?? false });
     res.end();
     return;
   }
@@ -219,14 +236,25 @@ const server = http.createServer(async (req, res) => {
     if (req.method !== 'GET') req.resume();
     throw new HttpError(404, `no route for ${req.method} ${url.pathname}`);
   } catch (e) {
-    const status = e.status && e.status >= 400 && !(e instanceof WahaError) ? e.status : e instanceof WahaError ? 502 : 500;
+    const status = e instanceof WahaError ? 502 : (e.status >= 400 ? e.status : 500);
     if (status >= 500) console.error(e);
     if (res.headersSent) { res.end(); return; }
     send(res, status, { error: e.message ?? String(e) });
   }
 });
 
+server.on('error', (e) => {
+  console.error(e.code === 'EADDRINUSE' ? `port ${PORT} is already in use — is another panel running? (WA_PANEL_PORT changes it)` : e.message);
+  process.exit(1);
+});
+
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`panel listening on http://127.0.0.1:${server.address().port}`);
   console.log(`data dir: ${DATA_DIR} · env files loaded: ${ENV_FILES.filter((f) => fs.existsSync(f)).join(', ') || 'none'}`);
+});
+
+for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => {
+  jobs.cancel();
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 1000).unref();
 });

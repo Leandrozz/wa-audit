@@ -42,6 +42,10 @@ data/
   As everywhere in this project, `WA_*` variables in your shell override
   the file — keep the shell clean when you drive several audits.
 
+  A `WA_CONFIG_FILE` that points at a missing file is an error, not a
+  silent fallback. `report.filename` must be a bare file name (no
+  directories); the panel refuses anything else.
+
 ## Secrets and env files
 
 Secrets never go through the browser. The panel loads `waha.env`,
@@ -50,7 +54,11 @@ repo root) with Node's `process.loadEnvFile`, and passes them to every
 script it spawns. Put `ANTHROPIC_API_KEY` (or `LLM_API_KEY`) in any of
 them. Variables already set in your shell win. Edit a file → **restart
 the panel** (the "Fuente y WAHA" tab says so, and shows which files and
-which key *names* were found — never values).
+which key *names* were found — never values). The same is true for any
+`WA_*` key inside those env files: it overrides the per-audit config for
+every audit. The panel warns at startup and the "Fuente y WAHA" tab lists
+such overrides in red; keep identity settings in the per-audit config
+instead.
 
 ## Tabs
 

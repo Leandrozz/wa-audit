@@ -16,7 +16,7 @@ export class JobError extends Error {
 }
 
 export const STEPS = ['probe', 'export', 'threads', 'analyze', 'report-xlsx', 'report-html', 'report-docx'];
-const DIM_RE = /^[a-z_]+$/;
+const DIM_RE = /^[a-z0-9_]+$/;
 const REPORTS = { 'report-xlsx': 'src/report-xlsx.mjs', 'report-html': 'src/report-html.mjs', 'report-docx': 'src/report-docx.mjs' };
 
 /** step + resolved config (+ options) → { script, args }. Throws JobError(400) on anything it will not run. */
@@ -75,6 +75,8 @@ export function createJobRunner({ root, maxLines = 2000 }) {
     started_at: job.started_at,
     ended_at: job.ended_at,
     exit_code: job.exit_code,
+    signal: job.signal,
+    cancelled: job.cancelled,
     running: child !== null,
     tail: job.lines.slice(-40),
   };
@@ -86,7 +88,7 @@ export function createJobRunner({ root, maxLines = 2000 }) {
 
     start({ slug, step, script, args = [], env }) {
       if (child) throw new JobError(409, `a job is already running (${job.step} on "${job.slug}")`);
-      job = { id: ++seq, slug, step, started_at: new Date().toISOString(), ended_at: null, exit_code: null, lines: [] };
+      job = { id: ++seq, slug, step, started_at: new Date().toISOString(), ended_at: null, exit_code: null, signal: null, cancelled: false, lines: [] };
       const proc = spawn(process.execPath, [path.join(root, script), ...args], {
         cwd: process.cwd(),
         env,
@@ -117,19 +119,21 @@ export function createJobRunner({ root, maxLines = 2000 }) {
       proc.stdout.setEncoding('utf8').on('data', out.data);
       proc.stderr.setEncoding('utf8').on('data', err.data);
       proc.on('error', (e) => push('err', `spawn failed: ${e.message}`));
-      proc.on('close', (code) => {
+      proc.on('close', (code, signal) => {
         out.flush();
         err.flush();
         job.ended_at = new Date().toISOString();
         job.exit_code = code;
+        job.signal = signal;
         child = null;
-        emit({ type: 'end', exit_code: code });
+        emit({ type: 'end', exit_code: code, signal, cancelled: job.cancelled });
       });
       return view();
     },
 
     cancel() {
       if (!child) return false;
+      job.cancelled = true;
       child.kill();
       return true;
     },

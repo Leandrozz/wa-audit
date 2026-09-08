@@ -65,7 +65,7 @@ function mergeSection(base, over, path, warnings) {
   if (base !== null && typeof base === 'object' && !Array.isArray(base)) {
     const out = { ...base };
     for (const k of Object.keys(over ?? {})) {
-      if (!(k in base)) {
+      if (!Object.hasOwn(base, k)) {
         warnings.push(`unknown config key "${path}${k}" ignored`);
         continue;
       }
@@ -114,7 +114,7 @@ export function resolveConfig(fromFile = {}, env = {}) {
   if (!SOURCE_KINDS.includes(cfg.source.kind)) {
     errors.push(`Invalid source.kind "${cfg.source.kind}" — expected one of ${SOURCE_KINDS.join(', ')}`);
   }
-  if (!SESSION_RE.test(String(cfg.source.session))) {
+  if (typeof cfg.source.session !== 'string' || !SESSION_RE.test(cfg.source.session)) {
     errors.push(`Invalid source.session "${cfg.source.session}" — letters, digits, "_" and "-" only`);
   }
   return { cfg, warnings, errors };

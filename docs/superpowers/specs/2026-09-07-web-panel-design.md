@@ -75,6 +75,9 @@ root config therefore seeds every new audit (locale, timezone, LLM).
    function, so the browser can never write a config the CLIs would reject.
    Unknown keys are an error for the panel (a warning for the CLIs,
    unchanged).
+4. `report.filename` is validated as a bare file name on the panel's write
+   path and normalized with `path.basename` on reads (ruled during review:
+   it fed filesystem probes).
 
 Child processes get `WA_OUT_DIR=<audit dir>` and `WA_CONFIG_FILE=<audit
 config>`; env beats file in `loadConfig`, so `output.dir` in the file is
@@ -121,8 +124,8 @@ All JSON under `/api`. `GET /` serves `src/panel.html`. Errors are
 | `POST /api/waha/sessions` `{name}` | create with `noweb.store.fullSync: true` |
 | `GET /api/waha/qr/:session` | proxy of the PNG QR |
 | `POST /api/audits/:slug/run` `{step, options}` | starts a job; 409 if one is running |
-| `GET /api/jobs/current` | `{id, slug, step, started_at, ended_at, exit_code, tail}` or `null` |
-| `GET /api/jobs/stream` | SSE: buffered lines then live lines, each as `data: {"s":"out"|"err","t":"<line>"}`; `event: end` with `data: {"exit_code":N}`; a client attaching after the end gets buffer + `end` immediately; with no job ever started it gets `end` with `exit_code: null` |
+| `GET /api/jobs/current` | `{id, slug, step, started_at, ended_at, exit_code, signal, cancelled, tail}` or `null` (`signal`/`cancelled` added after the final review: cancel intent and kill signal are distinguishable from a crash) |
+| `GET /api/jobs/stream` | SSE: buffered lines then live lines, each as `data: {"s":"out"|"err","t":"<line>"}`; `event: end` with `data: {"exit_code":N,"signal":S|null,"cancelled":bool}`; a client attaching after the end gets buffer + `end` immediately; with no job ever started it gets `end` with `exit_code: null, signal: null, cancelled: false` (`signal`/`cancelled` added after the final review: cancel intent and kill signal are distinguishable from a crash) |
 | `POST /api/jobs/cancel` | `child.kill()`; 404 if nothing runs |
 
 ### Jobs

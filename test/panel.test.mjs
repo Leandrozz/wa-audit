@@ -44,7 +44,6 @@ test('resolveConfig: defaults, unknown keys, bad offset, source validation', () 
   assert.equal(env.cfg.timezone.offsetMinutes, 60);
 
   // Regression: resolveConfig must not mutate DEFAULTS or any previously returned cfg
-  const beforeMutation = structuredClone(DEFAULTS);
   const cfg1 = resolveConfig({}, { WA_TZ_OFFSET: '+01:00', WA_BUSINESS_NAME: 'env' });
   assert.equal(cfg1.cfg.timezone.offsetMinutes, 60);
   assert.equal(cfg1.cfg.business.name, 'env');
@@ -125,6 +124,14 @@ test('audit store: create, list, config validation, status rule, downloads white
   assert.deepEqual(store.list().map((a) => [a.slug, a.has_config]), [['acme', true], ['wa-history', false]]);
   store.ensureConfig('wa-history');
   assert.ok(existsSync(path.join(dataDir, 'wa-history', 'wa-audit.config.json')));
+
+  // a malformed per-audit config file must not brick the whole audit list
+  mkdirSync(path.join(dataDir, 'broken'));
+  writeFileSync(path.join(dataDir, 'broken', 'wa-audit.config.json'), '{ not json');
+  const listedWithBroken = store.list();
+  assert.deepEqual(listedWithBroken.map((a) => a.slug), ['acme', 'broken', 'wa-history']);
+  assert.match(listedWithBroken.find((a) => a.slug === 'broken').error, /not valid JSON/);
+  assert.throws(() => store.readConfig('broken'), (e) => e instanceof AuditError && e.status === 500 && /not valid JSON/.test(e.message));
 
   assert.throws(() => store.writeConfig('acme', { ...cfg, bogus: 1 }), (e) => e.status === 400 && /unknown config key "bogus"/.test(e.message));
   assert.throws(() => store.writeConfig('acme', { ...cfg, timezone: { utcOffset: 'x' } }), (e) => e.status === 400 && /utcOffset/.test(e.message));
@@ -264,6 +271,22 @@ test('jobs: a throwing subscriber does not break the others or the runner', asyn
   assert.equal(runner.running(), false);
 });
 
+test('jobs: cancel() records intent and the end event carries the signal', async () => {
+  const dir = tmpDir();
+  writeFileSync(path.join(dir, 'slow.mjs'), "setTimeout(() => process.exit(0), 20000);");
+  const runner = createJobRunner({ root: dir });
+  const ended = new Promise((resolve) => runner.subscribe((ev) => { if (ev.type === 'end') resolve(ev); }));
+  runner.start({ slug: 'x', step: 'export', script: 'slow.mjs', args: [], env: process.env });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(runner.cancel(), true);
+  const end = await ended;
+  assert.equal(end.cancelled, true);
+  assert.equal(end.exit_code, null);
+  assert.ok(end.signal, 'a killed child reports a signal');
+  assert.equal(runner.current().cancelled, true);
+  assert.equal(runner.running(), false);
+});
+
 export const PANEL_HEADERS = { 'content-type': 'application/json', 'x-wa-panel': '1' };
 
 /** Boots src/panel.mjs with the given cwd/env; resolves { child, base } once it prints its URL. */
@@ -367,10 +390,11 @@ test('panel HTTP: security gates, audits, config, context, env, dimensions, WAHA
 
     // --- env + dimensions
     r = await api(base, 'GET', '/api/env');
-    assert.deepEqual(r.body.map((e) => [e.file, e.exists]), [['waha.env', false], ['kapso.env', false], ['ig.env', false]]);
+    assert.deepEqual(r.body.files.map((e) => [e.file, e.exists]), [['waha.env', false], ['kapso.env', false], ['ig.env', false]]);
+    assert.deepEqual(r.body.overrides, []);
     writeFileSync(path.join(cwd, 'kapso.env'), '# comment\nKAPSO_API_KEY=secret-value\nexport KAPSO_PHONE_NUMBER_ID=123\n');
     r = await api(base, 'GET', '/api/env');
-    assert.deepEqual(r.body[1], { file: 'kapso.env', exists: true, keys: ['KAPSO_API_KEY', 'KAPSO_PHONE_NUMBER_ID'] });
+    assert.deepEqual(r.body.files[1], { file: 'kapso.env', exists: true, keys: ['KAPSO_API_KEY', 'KAPSO_PHONE_NUMBER_ID'] });
     assert.ok(!JSON.stringify(r.body).includes('secret-value'), 'values never leave the server');
     r = await api(base, 'GET', '/api/dimensions');
     assert.ok(r.body.some((d) => d.key === 'frequent_questions'));
@@ -547,6 +571,7 @@ test('panel HTML: served with CSP, no innerHTML, only talks to /api', async () =
     }
     assert.ok(!html.includes('prompt('), 'no prompt() dialog: it is unsupported in automation/CDP browsers and sandboxed iframes');
     assert.ok(html.includes('id="new-slug"'), 'inline audit-creation input is present');
+    assert.equal((await fetch(base + '/api/waha/sessions')).status, 502, 'unconfigured WAHA is a 502, not a crash');
 
     const cspHeader = r.headers.get('content-security-policy');
     const nonce = /script-src 'nonce-([0-9a-f-]{36})'/.exec(cspHeader)?.[1];

@@ -90,7 +90,7 @@ let qrTimer = null;   // QR refresh interval
 async function loadAudits() {
   const audits = await api('GET', '/api/audits');
   const sel = clear($('audit'));
-  for (const a of audits) sel.append(el('option', { value: a.slug }, a.slug + ' · ' + a.business_name));
+  for (const a of audits) sel.append(el('option', { value: a.slug }, a.error ? a.slug + ' · ⚠ config rota' : a.slug + ' · ' + a.business_name));
   if (!audits.some((a) => a.slug === slug)) slug = audits[0] ? audits[0].slug : '';
   sel.value = slug;
   localStorage.setItem('wa-panel.audit', slug);
@@ -160,8 +160,9 @@ async function renderFuente(sec) {
   const envs = await api('GET', '/api/env');
   sec.append(el('h3', {}, 'Archivos .env'),
     el('p', { class: 'muted' }, 'Se cargan al arrancar el panel: reiniciá el panel después de editarlos. Solo se muestran los nombres de las claves.'),
-    el('table', {}, el('tbody', {}, envs.map((e) => el('tr', {}, el('td', {}, e.file),
+    el('table', {}, el('tbody', {}, envs.files.map((e) => el('tr', {}, el('td', {}, e.file),
       el('td', { class: e.exists ? 'ok' : 'miss' }, e.exists ? 'presente · claves: ' + (e.keys.join(', ') || '(ninguna)') : 'no existe'))))));
+  if (envs.overrides.length) sec.append(el('p', { class: 'error' }, 'Estas variables de entorno pisan la config de TODAS las auditorías: ' + envs.overrides.join(', ') + '. Sacalas del entorno o de los .env para que valga la config por auditoría.'));
 
   if (cfg.source.kind !== 'waha') return;
   const box = el('div', { class: 'card' });
@@ -259,19 +260,16 @@ function attachLog() {
     log.scrollTop = log.scrollHeight;
     if (state) state.textContent = 'corriendo…';
   };
-  src.addEventListener('end', async (ev) => {
+  src.addEventListener('end', (ev) => {
     src.close();
     if (es === src) es = null;
-    const { exit_code } = JSON.parse(ev.data);
+    const { exit_code, signal, cancelled } = JSON.parse(ev.data);
     if (state) {
-      if (exit_code === 0) state.textContent = 'terminó OK';
-      else if (exit_code !== null) state.textContent = 'terminó con exit ' + exit_code;
-      else {
-        try {
-          const j = await api('GET', '/api/jobs/current');
-          state.textContent = j ? 'cancelado (el proceso terminó sin código de salida)' : 'sin jobs todavía';
-        } catch (e) { state.textContent = 'sin jobs todavía'; }
-      }
+      state.textContent = cancelled ? 'cancelado'
+        : signal ? 'terminado por señal ' + signal
+        : exit_code === 0 ? 'terminó OK'
+        : exit_code === null ? 'sin jobs todavía'
+        : 'terminó con exit ' + exit_code;
     }
     updateBadge();
   });
@@ -281,7 +279,10 @@ function attachLog() {
 async function updateBadge() {
   try {
     const j = await api('GET', '/api/jobs/current');
-    $('job-badge').textContent = !j ? '' : j.running ? '⏳ ' + j.step + ' en ' + j.slug : 'último job: ' + j.step + ' (' + (j.exit_code === 0 ? 'OK' : 'exit ' + j.exit_code) + ')';
+    $('job-badge').textContent = !j ? '' : j.running ? '⏳ ' + j.step + ' en ' + j.slug
+      : j.cancelled ? 'último job: ' + j.step + ' (cancelado)'
+      : j.signal ? 'último job: ' + j.step + ' (señal ' + j.signal + ')'
+      : 'último job: ' + j.step + ' (' + (j.exit_code === 0 ? 'OK' : 'exit ' + j.exit_code) + ')';
   } catch (e) { /* badge is best-effort */ }
 }
 

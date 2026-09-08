@@ -63,12 +63,19 @@ export function createAuditStore({ dataDir, baseline }) {
   });
   const writeJson = (file, obj) => fs.writeFileSync(file, JSON.stringify(obj, null, 2) + '\n', 'utf8');
 
+  function readConfigFile(slug) {
+    const file = configPath(slug);
+    if (!fs.existsSync(file)) return seed(slug);
+    let raw;
+    try { raw = fs.readFileSync(file, 'utf8'); } catch (e) { throw new AuditError(500, `${CONFIG_NAME} of "${slug}" cannot be read: ${e.message}`); }
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch (e) { throw new AuditError(500, `${CONFIG_NAME} of "${slug}" is not valid JSON: ${e.message}`); }
+    if (!isPlainObject(parsed)) throw new AuditError(500, `${CONFIG_NAME} of "${slug}" is not a JSON object`);
+    return parsed;
+  }
   function readConfig(slug) {
     existing(slug);
-    const file = configPath(slug);
-    const stored = fs.existsSync(file) ? readJsonOr(file, null) : seed(slug);
-    if (!isPlainObject(stored)) throw new AuditError(500, `${CONFIG_NAME} of "${slug}" is not a JSON object`);
-    return stripDerived(resolveConfig(stored, {}).cfg);
+    return stripDerived(resolveConfig(readConfigFile(slug), {}).cfg);
   }
   function reportNames(slug) {
     // Normalize defensively for hand-edited configs: extract bare filename and protect against traversal
@@ -102,7 +109,9 @@ export function createAuditStore({ dataDir, baseline }) {
         .filter((e) => e.isDirectory() && SLUG_RE.test(e.name))
         .map((e) => e.name)
         .sort()
-        .map(item);
+        .map((slug) => {
+          try { return item(slug); } catch (e) { return { slug, has_config: fs.existsSync(configPath(slug)), business_name: slug, files: {}, error: e.message }; }
+        });
     },
 
     create(slug) {
