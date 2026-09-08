@@ -170,12 +170,15 @@ confiable. Nunca envía mensajes de WhatsApp. Setup:
 ## O manejá todo desde un panel web local
 
 `npm run panel` levanta un panel en http://127.0.0.1:8480 (solo loopback,
-sin login): varias auditorías a la vez (una carpeta por cliente en
-`data/`), elección de fuente (WAHA / Kapso / Instagram), el QR de WAHA en
-pantalla, cada fase del pipeline con logs en vivo, el corpus y los
-hallazgos verificados como vistas de solo lectura, configuración por
-auditoría y los tres reportes para descargar. Cero dependencias nuevas:
-`node:http` y un HTML. Los secretos siguen en los archivos `.env`.
+sin login). La pantalla "Inicio" es todo el flujo: pegás la URL y la clave
+de WAHA, la clave de la IA, escribís el nombre del negocio, escaneás el QR,
+apretás **Iniciar auditoría** y ves correr el pipeline paso a paso hasta
+tener los tres reportes para descargar. Detrás de "Avanzado": varias
+auditorías a la vez (una carpeta por cliente en `data/`), elección de
+fuente (WAHA / Kapso / Instagram), cada fase por separado con logs en
+vivo, el corpus, los hallazgos verificados y la configuración por
+auditoría. Cero dependencias nuevas: `node:http` y un HTML. Las claves se
+guardan en `waha.env` en tu máquina y nunca vuelven al navegador.
 Detalles y postura de seguridad: [docs/panel.md](docs/panel.md).
 
 ## Configuración, contrato de datos y límites

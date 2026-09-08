@@ -23,7 +23,7 @@ import { pipeline } from 'node:stream/promises';
 import { randomUUID } from 'node:crypto';
 import { loadConfig } from './lib/config.mjs';
 import { createAuditStore, listDimensions } from './lib/audits.mjs';
-import { createJobRunner, commandFor } from './lib/jobs.mjs';
+import { createJobRunner, commandFor, commandsForAll } from './lib/jobs.mjs';
 import { listSessions, createSession, qrPng, WahaError } from './lib/waha.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -139,6 +139,61 @@ route('GET', /^\/api\/audits\/([^/]+)\/analysis$/, (req, res, [slug]) => [200, s
 route('GET', /^\/api\/dimensions$/, () => [200, listDimensions()]);
 route('GET', /^\/api\/env$/, () => [200, { files: envFiles(), overrides: OVERRIDES }]);
 
+// ----------------------------------------------------------------- setup ---
+// First-run setup from the Inicio screen: WAHA URL/key and the LLM key are
+// written to waha.env in cwd (the file the README already prescribes) and
+// applied to this process at once. Values are never sent back to the browser.
+const SETUP_FILE = 'waha.env';
+const LLM_KEY = { anthropic: 'ANTHROPIC_API_KEY', openai: 'LLM_API_KEY' };
+const setupView = () => ({
+  waha: { base: (process.env.WAHA_BASE_URL ?? '').replace(/\/+$/, ''), has_key: Boolean(process.env.WAHA_API_KEY) },
+  llm: { has_anthropic_key: Boolean(process.env.ANTHROPIC_API_KEY), has_openai_key: Boolean(process.env.LLM_API_KEY || process.env.OPENAI_API_KEY) },
+  env_file: SETUP_FILE,
+  // The simulated provider only knows the dimensions that have canned answers in the fixtures.
+  demo_canned_dir: path.join(ROOT, 'fixtures', 'llm-canned'),
+  demo_dimensions: fs.readdirSync(path.join(ROOT, 'fixtures', 'llm-canned')).map((f) => /^generate-(.+)\.json$/.exec(f)?.[1]).filter(Boolean).sort(),
+});
+const secret = (v, name) => {
+  if (v === undefined || v === null || v === '') return null;
+  if (typeof v !== 'string' || /[\r\n]/.test(v) || v.length > 512) throw new HttpError(400, `${name} must be a single line of at most 512 characters`);
+  return v.trim();
+};
+/** Upserts KEY=value lines into an env file, keeping every other line (comments included), and applies them to process.env. */
+function upsertEnv(file, entries) {
+  const lines = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split(/\r?\n/) : [];
+  while (lines.length && lines[lines.length - 1] === '') lines.pop();
+  for (const [key, value] of Object.entries(entries)) {
+    const re = new RegExp(`^\\s*(?:export\\s+)?${key}\\s*=`);
+    const i = lines.findIndex((l) => re.test(l));
+    if (i >= 0) lines[i] = `${key}=${value}`; else lines.push(`${key}=${value}`);
+    process.env[key] = value;
+  }
+  // Owner-only: the file holds API keys. (A no-op on Windows ACLs; real on Linux/macOS.)
+  fs.writeFileSync(file, lines.join('\n') + '\n', { encoding: 'utf8', mode: 0o600 });
+  try { fs.chmodSync(file, 0o600); } catch { /* filesystem without POSIX modes */ }
+}
+route('GET', /^\/api\/setup$/, () => [200, setupView()]);
+route('POST', /^\/api\/setup$/, async (req) => {
+  const body = await readJson(req);
+  const entries = {};
+  if (body.waha_base !== undefined && body.waha_base !== '') {
+    const base = String(body.waha_base).trim().replace(/\/+$/, '');
+    if (!/^https?:\/\/[^\s/]+(?:\/[^\s]*)?$/.test(base)) throw new HttpError(400, 'waha_base must be an http(s) URL');
+    entries.WAHA_BASE_URL = base;
+  }
+  const wahaKey = secret(body.waha_key, 'waha_key');
+  if (wahaKey) entries.WAHA_API_KEY = wahaKey;
+  if (body.llm_provider !== undefined) {
+    if (!Object.hasOwn(LLM_KEY, body.llm_provider) && body.llm_provider !== 'mock') throw new HttpError(400, 'llm_provider must be anthropic, openai or mock');
+    const llmKey = secret(body.llm_key, 'llm_key');
+    if (llmKey && LLM_KEY[body.llm_provider]) entries[LLM_KEY[body.llm_provider]] = llmKey;
+  } else if (body.llm_key !== undefined && body.llm_key !== '') {
+    throw new HttpError(400, 'llm_key needs llm_provider');
+  }
+  if (Object.keys(entries).length) upsertEnv(SETUP_FILE, entries);
+  return [200, setupView()];
+});
+
 /** Runs a WAHA client call; a network failure (fetch throws TypeError, e.g. the instance is unreachable) becomes a 502 instead of an uncaught crash. */
 async function waha(fn) {
   try {
@@ -176,12 +231,16 @@ route('GET', /^\/api\/audits\/([^/]+)\/files\/([^/]+)$/, async (req, res, [slug,
 route('POST', /^\/api\/audits\/([^/]+)\/run$/, async (req, res, [slug]) => {
   const { step, options = {} } = await readJson(req);
   const cfg = store.readConfig(slug);
-  const cmd = commandFor(String(step), cfg, options && typeof options === 'object' ? options : {});
+  const opts = options && typeof options === 'object' && !Array.isArray(options) ? options : {};
+  // "all" = the whole pipeline as one job (Iniciar auditoría); anything else is a single step.
+  const spec = String(step) === 'all' ? { commands: commandsForAll(cfg, opts) } : commandFor(String(step), cfg, opts);
   store.ensureConfig(slug);
+  // "Iniciar" skips the operator interview on purpose; seed the minimum so the analysis knows the business name.
+  if (spec.commands && !Object.keys(store.readContext(slug)).length) store.writeContext(slug, { business_name: cfg.business.name });
   const job = jobs.start({
     slug,
     step: String(step),
-    ...cmd,
+    ...spec,
     env: { ...process.env, WA_OUT_DIR: store.dir(slug), WA_CONFIG_FILE: store.configPath(slug) },
   });
   return [202, job];

@@ -57,6 +57,13 @@ export function commandFor(step, cfg, options = {}) {
   }
 }
 
+/** The whole pipeline for the audit's source, in order. "Iniciar auditoría" runs it as ONE job. */
+export function commandsForAll(cfg, options = {}) {
+  const steps = ['export', 'threads', 'analyze', 'report-xlsx', 'report-html', 'report-docx'];
+  if (cfg.source.kind === 'waha') steps.unshift('probe');
+  return steps.map((step) => ({ step, ...commandFor(step, cfg, options) }));
+}
+
 // ponytail: global lock, per-audit locks if two clients ever matter
 export function createJobRunner({ root, maxLines = 2000 }) {
   let seq = 0;
@@ -78,6 +85,7 @@ export function createJobRunner({ root, maxLines = 2000 }) {
     signal: job.signal,
     cancelled: job.cancelled,
     running: child !== null,
+    progress: { ...job.progress },
     tail: job.lines.slice(-40),
   };
 
@@ -86,16 +94,14 @@ export function createJobRunner({ root, maxLines = 2000 }) {
     running: () => child !== null,
     lines: () => (job ? job.lines : []),
 
-    start({ slug, step, script, args = [], env }) {
+    /** One script (`script`/`args`) or a sequence (`commands: [{step, script, args}]`) run one after another; the sequence stops at the first non-zero exit. */
+    start({ slug, step, script, args = [], commands, env }) {
       if (child) throw new JobError(409, `a job is already running (${job.step} on "${job.slug}")`);
-      job = { id: ++seq, slug, step, started_at: new Date().toISOString(), ended_at: null, exit_code: null, signal: null, cancelled: false, lines: [] };
-      const proc = spawn(process.execPath, [path.join(root, script), ...args], {
-        cwd: process.cwd(),
-        env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        windowsHide: true,
-      });
-      child = proc;
+      const queue = commands ?? [{ step, script, args }];
+      job = {
+        id: ++seq, slug, step, started_at: new Date().toISOString(), ended_at: null, exit_code: null, signal: null, cancelled: false, lines: [],
+        progress: { total: queue.length, done: 0, step: queue[0].step },
+      };
       const push = (s, t) => {
         job.lines.push({ s, t });
         if (job.lines.length > maxLines) job.lines.shift();
@@ -114,20 +120,35 @@ export function createJobRunner({ root, maxLines = 2000 }) {
           flush: () => { if (rest) push(s, rest); rest = ''; },
         };
       };
-      const out = lineReader('out');
-      const err = lineReader('err');
-      proc.stdout.setEncoding('utf8').on('data', out.data);
-      proc.stderr.setEncoding('utf8').on('data', err.data);
-      proc.on('error', (e) => push('err', `spawn failed: ${e.message}`));
-      proc.on('close', (code, signal) => {
-        out.flush();
-        err.flush();
-        job.ended_at = new Date().toISOString();
-        job.exit_code = code;
-        job.signal = signal;
-        child = null;
-        emit({ type: 'end', exit_code: code, signal, cancelled: job.cancelled });
-      });
+      const runAt = (i) => {
+        const cmd = queue[i];
+        job.progress.step = cmd.step;
+        if (queue.length > 1) push('out', `▶ ${cmd.step}`);
+        const proc = spawn(process.execPath, [path.join(root, cmd.script), ...(cmd.args ?? [])], {
+          cwd: process.cwd(),
+          env,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          windowsHide: true,
+        });
+        child = proc;
+        const out = lineReader('out');
+        const err = lineReader('err');
+        proc.stdout.setEncoding('utf8').on('data', out.data);
+        proc.stderr.setEncoding('utf8').on('data', err.data);
+        proc.on('error', (e) => push('err', `spawn failed: ${e.message}`));
+        proc.on('close', (code, signal) => {
+          out.flush();
+          err.flush();
+          if (code === 0) job.progress.done = i + 1;
+          if (code === 0 && !job.cancelled && i + 1 < queue.length) { runAt(i + 1); return; }
+          job.ended_at = new Date().toISOString();
+          job.exit_code = code;
+          job.signal = signal;
+          child = null;
+          emit({ type: 'end', exit_code: code, signal, cancelled: job.cancelled });
+        });
+      };
+      runAt(0);
       return view();
     },
 

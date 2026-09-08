@@ -411,6 +411,30 @@ test('panel HTTP: security gates, audits, config, context, env, dimensions, WAHA
     assert.equal(qr.status, 200);
     assert.equal(qr.headers.get('content-type'), 'image/png');
     assert.equal(Buffer.from(await qr.arrayBuffer()).subarray(1, 4).toString(), 'PNG');
+
+    // --- first-run setup: keys go to waha.env in cwd and never come back to the browser
+    r = await api(base, 'GET', '/api/setup');
+    assert.equal(r.status, 200);
+    assert.equal(r.body.waha.base, 'http://localhost:8443');
+    assert.equal(r.body.waha.has_key, true, 'WAHA_API_KEY came from the process env');
+    assert.equal(r.body.llm.has_anthropic_key, false);
+    r = await api(base, 'POST', '/api/setup', { waha_base: 'http://localhost:8443/', waha_key: 'new-waha-key', llm_provider: 'anthropic', llm_key: 'sk-ant-secret-123' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.waha.base, 'http://localhost:8443', 'trailing slash stripped');
+    assert.equal(r.body.llm.has_anthropic_key, true);
+    assert.ok(!JSON.stringify(r.body).includes('secret-123') && !JSON.stringify(r.body).includes('new-waha-key'), 'values never leave the server');
+    const envText = readFileSync(path.join(cwd, 'waha.env'), 'utf8');
+    assert.match(envText, /^WAHA_BASE_URL=http:\/\/localhost:8443$/m);
+    assert.match(envText, /^WAHA_API_KEY=new-waha-key$/m);
+    assert.match(envText, /^ANTHROPIC_API_KEY=sk-ant-secret-123$/m);
+    r = await api(base, 'POST', '/api/setup', { waha_base: 'http://localhost:8443', waha_key: '', llm_provider: 'anthropic', llm_key: '' });
+    assert.equal(r.status, 200);
+    assert.match(readFileSync(path.join(cwd, 'waha.env'), 'utf8'), /^WAHA_API_KEY=new-waha-key$/m, 'an empty key keeps the stored one');
+    assert.equal((await api(base, 'POST', '/api/setup', { waha_base: 'ftp://nope', waha_key: 'x' })).status, 400);
+    assert.equal((await api(base, 'POST', '/api/setup', { waha_base: 'http://localhost:8443', llm_provider: 'openai', llm_key: 'a\nb' })).status, 400, 'no newlines in keys');
+    assert.equal((await api(base, 'POST', '/api/setup', { llm_provider: 'telegram' })).status, 400);
+    assert.ok((await api(base, 'GET', '/api/env')).body.files[0].keys.includes('ANTHROPIC_API_KEY'), 'waha.env is listed with its key names');
+    assert.equal((await api(base, 'GET', '/api/waha/sessions')).status, 200, 'WAHA still reachable after the setup wrote the same base');
   } finally {
     panel.kill();
     mock.kill();
@@ -546,6 +570,35 @@ test('panel HTTP: pipeline end to end (probe → export → threads → analyze 
     assert.equal(r.status, 202);
     assert.notEqual((await waitJob(base)).exit_code, 0, 'no corpus there, the renderer fails — but the job ran');
     assert.ok(existsSync(path.join(dataDir, 'legacy', 'wa-audit.config.json')), 'config seeded on first run');
+
+    // --- "Iniciar auditoría": one job runs every step in sequence and reports progress
+    await api(base, 'POST', '/api/audits', { slug: 'todo' });
+    const allCfg = (await api(base, 'GET', '/api/audits/todo/config')).body;
+    Object.assign(allCfg, { business: { ...allCfg.business, name: 'Todo SRL' }, llm: { ...allCfg.llm, provider: 'mock', cannedDir: path.join(ROOT, 'fixtures', 'llm-canned') }, source: { kind: 'waha', session: 'fixture' } });
+    assert.equal((await api(base, 'PUT', '/api/audits/todo/config', allCfg)).status, 200);
+    r = await api(base, 'POST', '/api/audits/todo/run', { step: 'all', options: { dimensions: ['frequent_questions', 'ops_response_times'] } });
+    assert.equal(r.status, 202, JSON.stringify(r.body));
+    assert.equal(r.body.step, 'all');
+    assert.equal(r.body.progress.total, 7);
+    const all = await waitJob(base);
+    assert.equal(all.exit_code, 0, all.text.slice(-3000));
+    assert.match(all.text, /▶ probe[\s\S]*▶ export[\s\S]*▶ threads[\s\S]*▶ analyze[\s\S]*▶ report-xlsx[\s\S]*▶ report-html[\s\S]*▶ report-docx/, 'steps ran in order with a marker line each');
+    cur = (await api(base, 'GET', '/api/jobs/current')).body;
+    assert.deepEqual({ done: cur.progress.done, total: cur.progress.total }, { done: 7, total: 7 });
+    st = (await api(base, 'GET', '/api/audits/todo/status')).body;
+    assert.equal(st.next_step, 'report');
+    assert.deepEqual((await api(base, 'GET', '/api/audits/todo/business-context')).body, { business_name: 'Todo SRL' }, '"all" seeds a minimal business context when the interview was skipped');
+    assert.deepEqual(st.dimensions_done, ['frequent_questions', 'ops_response_times']);
+    assert.ok(st.files['whatsapp-report.xlsx'] && st.files['whatsapp-report.html'] && st.files['whatsapp-report.docx']);
+    // a failing step stops the sequence and reports which one
+    r = await api(base, 'POST', '/api/audits/ig-test/run', { step: 'all' });
+    assert.equal(r.status, 202);
+    assert.equal(r.body.progress.total, 6, 'non-WAHA sources skip the probe');
+    const failed = await waitJob(base);
+    assert.notEqual(failed.exit_code, 0, 'the IG exporter has no cookie and must fail');
+    cur = (await api(base, 'GET', '/api/jobs/current')).body;
+    assert.equal(cur.progress.step, 'export');
+    assert.equal(cur.progress.done, 0);
   } finally {
     panel.kill();
     mock.kill();
@@ -565,12 +618,14 @@ test('panel HTML: served with CSP, no innerHTML, only talks to /api', async () =
     const html = await r.text();
     assert.match(html, /<html lang="es">/);
     assert.ok(!/innerHTML|outerHTML|insertAdjacentHTML|document\.write/.test(html), 'DOM is built from text nodes only');
-    assert.ok(!/https?:\/\//.test(html.replace(/<!--[\s\S]*?-->/g, '')), 'no external resources');
+    assert.ok(!/https?:\/\/(?!localhost)/.test(html.replace(/<!--[\s\S]*?-->/g, '')), 'no external resources (the WAHA default URL is a localhost value, not a resource)');
     for (const label of ['Estado', 'Fuente y WAHA', 'Pipeline', 'Contexto', 'Corpus', 'Hallazgos', 'Reportes', 'Config']) {
       assert.ok(html.includes(label), `tab ${label}`);
     }
     assert.ok(!html.includes('prompt('), 'no prompt() dialog: it is unsupported in automation/CDP browsers and sandboxed iframes');
     assert.ok(html.includes('id="new-slug"'), 'inline audit-creation input is present');
+    assert.ok(html.includes('Iniciar auditoría') && html.includes('Inicio'), 'the guided start screen is present');
+    assert.ok(!/type="text"[^>]*key|value="sk-/.test(html), 'no key value is ever templated into the page');
     assert.equal((await fetch(base + '/api/waha/sessions')).status, 502, 'unconfigured WAHA is a 502, not a crash');
 
     const cspHeader = r.headers.get('content-security-policy');

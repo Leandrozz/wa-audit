@@ -173,13 +173,16 @@ message. Setup: [docs/mcp-setup.md](docs/mcp-setup.md).
 ## Or manage everything from a local web panel
 
 `npm run panel` starts a local panel at http://127.0.0.1:8480 (loopback
-only, no login): several audits side by side (one folder per client
-under `data/`), source selection (WAHA / Kapso / Instagram), the WAHA
-pairing QR on screen, every pipeline phase with live logs, the corpus and
-the verified findings as read-only views, per-audit configuration, and
-the three reports as downloads. Zero new dependencies: `node:http` and
-one HTML file. Secrets stay in the `.env` files. Details and the security
-posture: [docs/panel.md](docs/panel.md).
+only, no login). The "Inicio" screen is the whole flow: paste the WAHA
+URL/key and the LLM key, type the business name, scan the pairing QR,
+press **Iniciar auditoría** and watch the pipeline run step by step until
+the three reports are ready to download. Behind "Avanzado": several
+audits side by side (one folder per client under `data/`), source
+selection (WAHA / Kapso / Instagram), per-step runs with live logs, the
+corpus and the verified findings, per-audit configuration. Zero new
+dependencies: `node:http` and one HTML file. Keys are written to
+`waha.env` on your machine and never echoed back. Details and the
+security posture: [docs/panel.md](docs/panel.md).
 
 ## The pipeline
 

@@ -28,6 +28,10 @@
   input, select, textarea { font: inherit; }
   img.qr { image-rendering: pixelated; width: 260px; height: 260px; border: 1px solid #8884; display: block; }
   q { font-style: italic; }
+  .primary { font-weight: bold; padding: .45rem 1rem; }
+  ul.steps { list-style: none; padding: 0; margin: .5rem 0; } ul.steps li { padding: .15rem 0; } .now { font-weight: bold; }
+  details { margin: .4rem 0; } summary { cursor: pointer; }
+  input:disabled { opacity: .5; }
 </style>
 </head>
 <body>
@@ -41,6 +45,7 @@
 <nav id="tabs" role="tablist"></nav>
 <main>
   <p id="global-error" class="error" hidden></p>
+  <section id="tab-inicio"></section>
   <section id="tab-estado"></section>
   <section id="tab-fuente"></section>
   <section id="tab-pipeline"></section>
@@ -77,14 +82,17 @@ const $ = (id) => document.getElementById(id);
 const showError = (e) => { const p = $('global-error'); p.textContent = e && e.message ? e.message : String(e); p.hidden = false; };
 const clearError = () => { $('global-error').hidden = true; };
 
-const TABS = [['estado', 'Estado'], ['fuente', 'Fuente y WAHA'], ['pipeline', 'Pipeline'], ['contexto', 'Contexto'], ['corpus', 'Corpus'], ['hallazgos', 'Hallazgos'], ['reportes', 'Reportes'], ['config', 'Config']];
+// Inicio is the guided screen; the other eight tabs live behind "Avanzado".
+const TABS = [['inicio', 'Inicio'], ['estado', 'Estado'], ['fuente', 'Fuente y WAHA'], ['pipeline', 'Pipeline'], ['contexto', 'Contexto'], ['corpus', 'Corpus'], ['hallazgos', 'Hallazgos'], ['reportes', 'Reportes'], ['config', 'Config']];
 const STEP_LABEL = { context: 'completar el contexto de negocio', export: 'exportar el historial', threads: 'construir el corpus', analyze: 'correr el análisis', report: 'generar los reportes' };
 const STEP_TAB = { context: 'contexto', export: 'pipeline', threads: 'pipeline', analyze: 'pipeline', report: 'reportes' };
 let slug = localStorage.getItem('wa-panel.audit') || '';
-let tab = localStorage.getItem('wa-panel.tab') || 'estado';
-if (!TABS.some(([id]) => id === tab)) tab = 'estado';
-let es = null;        // EventSource of the live log
-let qrTimer = null;   // QR refresh interval
+let advanced = localStorage.getItem('wa-panel.advanced') === '1';
+let tab = localStorage.getItem('wa-panel.tab') || 'inicio';
+if (!TABS.some(([id]) => id === tab) || (!advanced && tab !== 'inicio')) tab = 'inicio';
+let es = null;             // EventSource of the live log
+let qrTimer = null;        // QR refresh interval
+let progressTimer = null;  // "Iniciar auditoría" progress poll
 
 // ------------------------------------------------------- audits + tabs ---
 async function loadAudits() {
@@ -113,18 +121,25 @@ $('new-audit').addEventListener('click', createAudit);
 $('new-slug').addEventListener('keydown', (e) => { if (e.key === 'Enter') createAudit(); });
 function buildTabs() {
   const nav = clear($('tabs'));
-  for (const [id, label] of TABS) {
-    nav.append(el('button', { role: 'tab', 'aria-selected': String(id === tab), on: { click: () => { tab = id; localStorage.setItem('wa-panel.tab', id); render(); } } }, label));
-  }
+  const tabBtn = ([id, label]) => el('button', { role: 'tab', 'aria-selected': String(id === tab), on: { click: () => { tab = id; localStorage.setItem('wa-panel.tab', id); render(); } } }, label);
+  nav.append(tabBtn(TABS[0]));
+  if (advanced) for (const t of TABS.slice(1)) nav.append(tabBtn(t));
+  nav.append(el('button', { class: 'muted', on: { click: () => {
+    advanced = !advanced;
+    localStorage.setItem('wa-panel.advanced', advanced ? '1' : '0');
+    if (!advanced) { tab = 'inicio'; localStorage.setItem('wa-panel.tab', tab); }
+    render();
+  } } }, advanced ? 'Avanzado ▴' : 'Avanzado ▾'));
 }
 async function render() {
   clearError();
   buildTabs();
   if (qrTimer) { clearInterval(qrTimer); qrTimer = null; }
+  if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
   if (es) { es.close(); es = null; }
   for (const [id] of TABS) $('tab-' + id).hidden = id !== tab;
   const sec = clear($('tab-' + tab));
-  if (!slug) { sec.append(el('p', {}, 'No hay auditorías todavía. Escribí un nombre arriba y apretá Crear.')); return; }
+  if (!slug && tab !== 'inicio') { sec.append(el('p', {}, 'No hay auditorías todavía. Creá una en Inicio o escribí un nombre arriba y apretá Crear.')); return; }
   try { await RENDER[tab](sec); } catch (e) { sec.append(el('p', { class: 'error' }, e.message)); }
 }
 
@@ -167,23 +182,8 @@ async function renderFuente(sec) {
   if (cfg.source.kind !== 'waha') return;
   const box = el('div', { class: 'card' });
   sec.append(el('h3', {}, 'WAHA'), box);
-  const showQr = (name) => {
-    if (qrTimer) clearInterval(qrTimer);
-    let img = box.querySelector('img.qr');
-    if (!img) {
-      img = el('img', { class: 'qr', alt: 'QR de vinculación' });
-      box.append(el('p', {}, 'Escaneá desde el teléfono del negocio: WhatsApp → Dispositivos vinculados → Vincular un dispositivo. El QR rota; se refresca solo cada 20 s.'), img);
-    }
-    const tick = async () => {
-      img.src = '/api/waha/qr/' + encodeURIComponent(name) + '?t=' + Date.now();
-      try {
-        const s = (await api('GET', '/api/waha/sessions')).find((x) => x.name === name);
-        if (s && s.status === 'WORKING') { clearInterval(qrTimer); qrTimer = null; await refresh(); box.append(el('p', { class: 'ok' }, 'Sesión "' + name + '" en WORKING: ya podés correr el probe.')); }
-      } catch (e) { /* the sessions table shows the state on the next refresh */ }
-    };
-    tick();
-    qrTimer = setInterval(tick, 20000);
-  };
+  const qrArea = el('div');
+  const showQr = (name) => qrInto(qrArea, name, async () => { await refresh(); box.append(el('p', { class: 'ok' }, 'Sesión "' + name + '" en WORKING: ya podés correr el probe.')); });
   const refresh = async () => {
     if (qrTimer) { clearInterval(qrTimer); qrTimer = null; }
     clear(box);
@@ -199,6 +199,7 @@ async function renderFuente(sec) {
       el('button', { on: { click: async () => { try { await api('POST', '/api/waha/sessions', { name: name.value.trim() }); await refresh(); showQr(name.value.trim()); } catch (e) { showError(e); } } } }, 'Crear sesión (fullSync)'),
       el('button', { on: { click: () => showQr(name.value.trim()) } }, 'Mostrar QR'),
       el('button', { on: { click: refresh } }, 'Actualizar')));
+    box.append(qrArea);
     box.append(el('p', { class: 'muted' }, 'Creá la sesión con fullSync ANTES de vincular el teléfono: activarlo después no trae el historial. La sesión ocupa un lugar de "dispositivo vinculado"; liberalo después de exportar. El historial completo necesita motor NOWEB o GOWS (el probe lo verifica).'));
   };
   await refresh();
@@ -245,12 +246,11 @@ async function runStep(step, options) {
 async function cancelJob() {
   try { await api('POST', '/api/jobs/cancel'); } catch (e) { showError(e); }
 }
-function attachLog() {
-  const log = $('log');
+/** Streams the current job's log into `log` (default: the Pipeline tab's pane); `onEnd` gets the end event. */
+function attachLog(log = $('log'), state = $('job-state'), onEnd) {
   if (!log) return;
   if (es) { es.close(); es = null; }
   clear(log);
-  const state = $('job-state');
   if (state) state.textContent = 'conectando…';
   const src = new EventSource('/api/jobs/stream');
   es = src;
@@ -272,6 +272,7 @@ function attachLog() {
         : 'terminó con exit ' + exit_code;
     }
     updateBadge();
+    if (onEnd) onEnd({ exit_code, signal, cancelled });
   });
   src.onerror = () => { src.close(); if (es === src) es = null; };
   updateBadge();
@@ -434,8 +435,184 @@ async function renderConfig(sec) {
   } } }, 'Guardar'), msg);
 }
 
+// ---------------------------------------------------------------- inicio ---
+/** Shows the pairing QR for a WAHA session in `box`, refreshing every 20 s until the session is WORKING, then calls onWorking. */
+function qrInto(box, name, onWorking) {
+  if (qrTimer) { clearInterval(qrTimer); qrTimer = null; }
+  clear(box);
+  const img = el('img', { class: 'qr', alt: 'QR de vinculación' });
+  box.append(el('p', {}, 'Escaneá desde el teléfono del negocio: WhatsApp → Dispositivos vinculados → Vincular un dispositivo. El QR rota; se refresca solo cada 20 s.'), img);
+  const tick = async () => {
+    img.src = '/api/waha/qr/' + encodeURIComponent(name) + '?t=' + Date.now();
+    try {
+      const s = (await api('GET', '/api/waha/sessions')).find((x) => x.name === name);
+      if (s && s.status === 'WORKING') { clearInterval(qrTimer); qrTimer = null; clear(box); await onWorking(); }
+    } catch (e) { /* the next tick retries */ }
+  };
+  tick();
+  qrTimer = setInterval(tick, 20000);
+}
+const slugify = (s) => (String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'auditoria');
+const ALL_STEPS = [['probe', 'Probar la conexión con WhatsApp'], ['export', 'Exportar el historial'], ['threads', 'Armar el corpus'], ['analyze', 'Analizar con IA y verificar'], ['report-xlsx', 'Reporte XLSX'], ['report-html', 'Reporte HTML'], ['report-docx', 'Reporte DOCX']];
+const PROVIDERS = [['anthropic', 'Anthropic (Claude)'], ['openai', 'OpenAI o compatible'], ['mock', 'Simulado (sin IA, para probar)']];
+async function renderInicio(sec) {
+  const setup = await api('GET', '/api/setup');
+  const cfg = slug ? await api('GET', '/api/audits/' + slug + '/config').catch(() => null) : null;
+  const note = (box) => { const p = el('p', { class: 'muted' }); box.append(p); return p; };
+  const say = (p, cls, text) => { p.className = cls; p.textContent = text; };
+  sec.append(el('h2', {}, 'Auditoría en tres pasos'),
+    el('p', { class: 'muted' }, 'Levantá WAHA, pegá dos claves, vinculá el teléfono y apretá Iniciar. Todo lo demás vive en "Avanzado".'));
+
+  // 1 · WhatsApp
+  const wBase = el('input', { size: '30', value: setup.waha.base || 'http://localhost:3000' });
+  const wKey = el('input', { type: 'password', size: '30', placeholder: setup.waha.has_key ? 'clave guardada ✓ (vacío = mantener)' : 'API key de WAHA' });
+  const c1 = el('div', { class: 'card' }, el('h3', {}, '1 · WhatsApp (WAHA)'),
+    el('div', { class: 'row' }, el('label', {}, 'URL ', wBase), el('label', {}, 'API key ', wKey), el('button', { on: { click: () => saveWaha() } }, 'Guardar y probar')));
+  const s1 = note(c1);
+  const probeWaha = async () => {
+    try {
+      const sessions = await api('GET', '/api/waha/sessions');
+      say(s1, 'ok', 'WAHA responde · ' + (sessions.length ? sessions.map((s) => s.name + ': ' + s.status).join(' · ') : 'todavía sin sesiones; vinculá el teléfono en el paso 3'));
+    } catch (e) { say(s1, 'error', 'WAHA no responde: ' + e.message); }
+  };
+  const saveWaha = async () => {
+    say(s1, 'muted', 'guardando…');
+    try {
+      Object.assign(setup, await api('POST', '/api/setup', { waha_base: wBase.value.trim(), waha_key: wKey.value }));
+      wKey.value = '';
+      wKey.placeholder = 'clave guardada ✓ (vacío = mantener)';
+      await probeWaha();
+    } catch (e) { say(s1, 'error', e.message); }
+  };
+  if (setup.waha.base) probeWaha();
+
+  // 2 · IA
+  const saved = JSON.parse(localStorage.getItem('wa-panel.llm') || '{}');
+  const provider = el('select', {}, PROVIDERS.map(([v, l]) => el('option', { value: v, selected: v === ((cfg && cfg.llm.provider) || saved.provider || 'anthropic') }, l)));
+  const llmKey = el('input', { type: 'password', size: '30' });
+  const model = el('input', { size: '22', placeholder: 'modelo (obligatorio con OpenAI)', value: (cfg && cfg.llm.model) || saved.model || '' });
+  const syncLlm = () => {
+    const has = provider.value === 'anthropic' ? setup.llm.has_anthropic_key : provider.value === 'openai' ? setup.llm.has_openai_key : true;
+    llmKey.disabled = provider.value === 'mock';
+    llmKey.placeholder = provider.value === 'mock' ? 'no hace falta' : has ? 'clave guardada ✓ (vacío = mantener)' : 'API key';
+    model.hidden = provider.value !== 'openai';
+  };
+  provider.addEventListener('change', syncLlm);
+  syncLlm();
+  const c2 = el('div', { class: 'card' }, el('h3', {}, '2 · IA'),
+    el('div', { class: 'row' }, provider, llmKey, model, el('button', { on: { click: () => saveLlm() } }, 'Guardar')));
+  const s2 = note(c2);
+  const saveLlm = async () => {
+    try {
+      Object.assign(setup, await api('POST', '/api/setup', { llm_provider: provider.value, llm_key: llmKey.value }));
+      llmKey.value = '';
+      localStorage.setItem('wa-panel.llm', JSON.stringify({ provider: provider.value, model: model.value.trim() }));
+      syncLlm();
+      say(s2, 'ok', 'Guardado.');
+    } catch (e) { say(s2, 'error', e.message); }
+  };
+
+  // 3 · Auditoría
+  const name = el('input', { size: '30', placeholder: 'nombre del negocio', value: cfg && cfg.business.name !== slug ? cfg.business.name : '' });
+  const session = el('input', { size: '20', placeholder: 'sesión WAHA', value: (cfg && cfg.source.session) || '' });
+  let sessionTouched = Boolean(cfg && cfg.source.session);
+  name.addEventListener('input', () => { if (!sessionTouched) session.value = slugify(name.value); });
+  session.addEventListener('input', () => { sessionTouched = true; });
+  const c3 = el('div', { class: 'card' }, el('h3', {}, '3 · Auditoría'),
+    el('div', { class: 'row' }, el('label', {}, 'Negocio ', name), el('label', {}, 'Sesión ', session),
+      el('button', { on: { click: () => linkPhone() } }, 'Vincular teléfono'),
+      el('button', { class: 'primary', on: { click: () => startAll() } }, 'Iniciar auditoría')));
+  const s3 = note(c3);
+  const qrArea = el('div');
+  const progress = el('div');
+  c3.append(qrArea, progress);
+  sec.append(c1, c2, c3);
+
+  const ensureAudit = async () => {
+    const label = name.value.trim();
+    if (!label) throw new Error('Poné el nombre del negocio.');
+    const target = slugify(label);
+    const audits = await api('GET', '/api/audits');
+    if (!audits.some((a) => a.slug === target)) await api('POST', '/api/audits', { slug: target });
+    slug = target;
+    localStorage.setItem('wa-panel.audit', slug);
+    const c = await api('GET', '/api/audits/' + slug + '/config');
+    c.business.name = label;
+    c.llm.provider = provider.value;
+    c.llm.model = provider.value === 'openai' ? (model.value.trim() || null) : null;
+    if (provider.value === 'mock') c.llm.cannedDir = setup.demo_canned_dir;
+    c.source = { kind: 'waha', session: session.value.trim() || target };
+    await api('PUT', '/api/audits/' + slug + '/config', c);
+    localStorage.setItem('wa-panel.llm', JSON.stringify({ provider: provider.value, model: model.value.trim() }));
+    await loadAudits();
+    return c;
+  };
+  const linkPhone = async () => {
+    try {
+      const c = await ensureAudit();
+      const s = (await api('GET', '/api/waha/sessions')).find((x) => x.name === c.source.session);
+      if (s && s.status === 'WORKING') { say(s3, 'ok', 'Teléfono vinculado ✓ (sesión "' + c.source.session + '"). Apretá Iniciar auditoría.'); return; }
+      if (!s) await api('POST', '/api/waha/sessions', { name: c.source.session });
+      say(s3, 'muted', 'Escaneá el QR con el teléfono del negocio…');
+      qrInto(qrArea, c.source.session, () => { say(s3, 'ok', 'Teléfono vinculado ✓. El historial se sincroniza en segundo plano: apretá Iniciar auditoría.'); probeWaha(); });
+    } catch (e) { say(s3, 'error', e.message); }
+  };
+  const showDownloads = async (box) => {
+    const st = await api('GET', '/api/audits/' + slug + '/status');
+    const files = Object.keys(st.files).filter((f) => /\.(xlsx|html|docx)$/.test(f) && st.files[f]);
+    clear(box);
+    if (!files.length) return;
+    box.append(el('div', { class: 'row' }, el('strong', {}, 'Descargar:'),
+      files.map((f) => el('a', { href: '/api/audits/' + slug + '/files/' + encodeURIComponent(f) }, f.split('.').pop().toUpperCase())),
+      el('button', { on: { click: () => { advanced = true; localStorage.setItem('wa-panel.advanced', '1'); tab = 'hallazgos'; localStorage.setItem('wa-panel.tab', tab); render(); } } }, 'Ver hallazgos')));
+  };
+  const showProgress = (kind) => {
+    if (progressTimer) clearInterval(progressTimer);
+    clear(progress);
+    const steps = kind === 'waha' ? ALL_STEPS : ALL_STEPS.slice(1);
+    const items = steps.map(([key, label]) => ({ key, label, li: el('li', { class: 'muted' }, '· ' + label) }));
+    const log = el('pre', { class: 'log' });
+    const state = el('span', { class: 'muted' });
+    const after = el('div');
+    progress.append(el('ul', { class: 'steps' }, items.map((x) => x.li)),
+      el('div', { class: 'row' }, el('button', { on: { click: cancelJob } }, 'Cancelar'), state),
+      el('details', {}, el('summary', {}, 'Ver el log'), log), after);
+    const paint = (j) => {
+      if (!j || !j.progress) return;
+      items.forEach((x, i) => {
+        const done = i < j.progress.done;
+        const current = x.key === j.progress.step && !done;
+        const failed = current && !j.running && j.exit_code !== 0;
+        x.li.className = done ? 'ok' : failed ? 'error' : current && j.running ? 'now' : 'muted';
+        x.li.textContent = (done ? '✓ ' : failed ? '✗ ' : current && j.running ? '⏳ ' : '· ') + x.label;
+      });
+    };
+    progressTimer = setInterval(async () => { try { paint(await api('GET', '/api/jobs/current')); } catch (e) { /* next tick */ } }, 1500);
+    attachLog(log, state, async (end) => {
+      if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
+      try { paint(await api('GET', '/api/jobs/current')); } catch (e) { /* the list keeps its last state */ }
+      if (end.exit_code === 0) { say(s3, 'ok', 'Listo: auditoría completa.'); showDownloads(after); }
+      else say(s3, 'error', end.cancelled ? 'Cancelada.' : 'Falló un paso: abrí el log para ver el error.');
+    });
+  };
+  const startAll = async () => {
+    try {
+      const c = await ensureAudit();
+      say(s3, 'muted', 'Arrancando…');
+      // The simulated provider can only answer the dimensions that ship canned in the fixtures.
+      const options = c.llm.provider === 'mock' ? { dimensions: setup.demo_dimensions } : {};
+      await api('POST', '/api/audits/' + slug + '/run', { step: 'all', options });
+      showProgress(c.source.kind);
+    } catch (e) { say(s3, 'error', e.message); }
+  };
+  // Reloaded mid-run: reattach to the running job. Otherwise offer what already exists.
+  const j = await api('GET', '/api/jobs/current').catch(() => null);
+  if (slug && j && j.running && j.slug === slug && j.step === 'all') showProgress(cfg ? cfg.source.kind : 'waha');
+  else if (slug && cfg) showDownloads(progress);
+}
+
 // ----------------------------------------------------------------- boot ---
-const RENDER = { estado: renderEstado, fuente: renderFuente, pipeline: renderPipeline, contexto: renderContexto, corpus: renderCorpus, hallazgos: renderHallazgos, reportes: renderReportes, config: renderConfig };
+const RENDER = { inicio: renderInicio, estado: renderEstado, fuente: renderFuente, pipeline: renderPipeline, contexto: renderContexto, corpus: renderCorpus, hallazgos: renderHallazgos, reportes: renderReportes, config: renderConfig };
 (async () => {
   try { await loadAudits(); await render(); updateBadge(); setInterval(updateBadge, 5000); } catch (e) { showError(e); }
 })();

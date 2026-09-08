@@ -9,6 +9,23 @@ npm run panel                # http://127.0.0.1:8480
 WA_PANEL_PORT=9000 npm run panel
 ```
 
+## Quick start (the "Inicio" screen)
+
+1. Run a WAHA instance (Docker: `docker run -d -p 3000:3000 -e WAHA_API_KEY=change-me devlikeapro/waha`).
+2. `npm run panel` and open http://127.0.0.1:8480.
+3. **1 · WhatsApp**: WAHA URL and API key → "Guardar y probar".
+4. **2 · IA**: provider and API key → "Guardar". ("Simulado" needs no key
+   and only runs the dimensions that ship canned in `fixtures/llm-canned`.)
+5. **3 · Auditoría**: business name → "Vincular teléfono" (scan the QR from
+   the business phone until the session reads WORKING) → **Iniciar
+   auditoría**. Probe, export, corpus, analysis with verification and the
+   three reports run as one job with a step-by-step progress list; the
+   download links appear at the end. Closing the tab does not stop it.
+
+The keys are written to `waha.env` next to the repo (gitignored) and
+applied at once; they are never sent back to the browser. Everything
+else (per-step runs, corpus, findings, config) is behind "Avanzado".
+
 It is a second face over the same scripts: every button spawns
 `src/*.mjs` exactly like `tools/demo.mjs` does. The pipeline, the
 verifier and the data contract do not change. Zero dependencies:
@@ -48,7 +65,9 @@ data/
 
 ## Secrets and env files
 
-Secrets never go through the browser. The panel loads `waha.env`,
+Secrets are stored only on your machine. The "Inicio" screen writes the
+WAHA URL/key and the LLM key to `waha.env` (the same file the CLI uses)
+and never echoes them back; the panel loads `waha.env`,
 `kapso.env` and `ig.env` from the directory it starts in (usually the
 repo root) with Node's `process.loadEnvFile`, and passes them to every
 script it spawns. Put `ANTHROPIC_API_KEY` (or `LLM_API_KEY`) in any of
