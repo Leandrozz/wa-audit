@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "panel-demo",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--env-file=C:\\Users\\admin\\AppData\\Local\\Temp\\claude\\C--Users-admin-Desktop-wa-analytics-oss\\43dd32af-8ebe-40aa-86b5-f932ca3e453a\\scratchpad\\panel-demo.env",
+        "src/panel.mjs"
+      ],
+      "port": 8480
+    }
+  ]
+}

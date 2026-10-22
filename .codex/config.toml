@@ -1,0 +1,8 @@
+[mcp_servers.wa-audit]
+command = "node"
+args = ["C:/Users/admin/Desktop/wa-analytics-oss/src/mcp-server.mjs"]
+
+[mcp_servers.wa-audit.env]
+WAHA_BASE_URL = "http://localhost:3000"
+WAHA_API_KEY = "wa-audit-demo-key"
+WA_OUT_DIR = "C:/Users/admin/Desktop/wa-analytics-oss/data/wa-history"
